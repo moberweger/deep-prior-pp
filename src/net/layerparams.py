@@ -20,6 +20,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import inspect
+import numpy
 
 __author__ = "Paul Wohlhart <wohlhart@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -84,3 +85,20 @@ class LayerParams(object):
                 return str(self.activation)
         else:
             return ''
+
+    def getOutputRange(self):
+        """
+        Get output range of layer
+        :return: output range as tuple
+        """
+        if not hasattr(self, 'activation'):
+            return [-numpy.inf, numpy.inf]
+        else:
+            if self.activation_str == 'tanh':
+                return [-1, 1]
+            elif self.activation_str == 'sigmoid':
+                return [0, 1]
+            elif self.activation_str == 'ReLU':
+                return [0, numpy.inf]
+            else:
+                return [-numpy.inf, numpy.inf]

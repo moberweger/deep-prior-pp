@@ -20,13 +20,17 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import glob
+import os
+os.environ["THEANO_FLAGS"] = "device=gpu,floatX=float32"
+
 import numpy
 from data.dataset import NYUDataset, ICVLDataset
 from net.poseregnet import PoseRegNetParams, PoseRegNet
+from net.resnet import ResNetParams, ResNet
 from net.scalenet import ScaleNetParams, ScaleNet
 from util.realtimehandposepipeline import RealtimeHandposePipeline
-from data.importers import ICVLImporter, NYUImporter, DepthImporter
+from data.importers import ICVLImporter, NYUImporter, MSRA15Importer
+from util.cameradevice import CreativeCameraDevice, FileDevice
 
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
@@ -39,34 +43,25 @@ __email__ = "oberweger@icg.tugraz.at"
 __status__ = "Development"
 
 if __name__ == '__main__':
+    rng = numpy.random.RandomState(23455)
+
+    # di = MSRA15Importer('../data/MSRA15/')
+    # Seq2 = di.loadSequence('test_seq_1')
+    # testSeqs = [Seq2]
 
     # di = ICVLImporter('../data/ICVL/')
     # Seq2 = di.loadSequence('test_seq_1')
     # testSeqs = [Seq2]
-    #
-    # testDataSet = ICVLDataset(testSeqs)
-    # test_data, test_gt3D = testDataSet.imgStackDepthOnly('test_seq_1')
 
     di = NYUImporter('../data/NYU/')
     Seq2 = di.loadSequence('test_1')
     testSeqs = [Seq2]
 
-    testDataSet = NYUDataset(testSeqs)
-    test_data, test_gt3D = testDataSet.imgStackDepthOnly('test_1')
-
     # load trained network
-    # poseNetParams = PoseRegNetParams(type=11, nChan=1, wIn=128, hIn=128, batchSize=1, numJoints=16, nDims=3)
-    # poseNet = PoseRegNet(numpy.random.RandomState(23455), cfgParams=poseNetParams)
-    # poseNet.load("./ICVL_network_prior.pkl")
     poseNetParams = PoseRegNetParams(type=11, nChan=1, wIn=128, hIn=128, batchSize=1, numJoints=14, nDims=3)
-    poseNet = PoseRegNet(numpy.random.RandomState(23455), cfgParams=poseNetParams)
-    poseNet.load("./NYU_network_prior.pkl")
-    # comrefNetParams = ScaleNetParams(type=1, nChan=1, wIn=128, hIn=128, batchSize=1, resizeFactor=2, numJoints=1, nDims=3)
-    # comrefNet = ScaleNet(numpy.random.RandomState(23455), cfgParams=comrefNetParams)
-    # comrefNet.load("./net_ICVL_COM.pkl")
+    poseNetParams.loadFile = "./eval/NYU_network_prior.pkl"
     comrefNetParams = ScaleNetParams(type=1, nChan=1, wIn=128, hIn=128, batchSize=1, resizeFactor=2, numJoints=1, nDims=3)
-    comrefNet = ScaleNet(numpy.random.RandomState(23455), cfgParams=comrefNetParams)
-    comrefNet.load("./net_NYU_COM.pkl")
+    comrefNetParams.loadFile = "./eval/net_NYU_COM_AUGMENT.pkl"
     config = {'fx': 588., 'fy': 587., 'cube': (300, 300, 300)}
     # config = {'fx': 241.42, 'fy': 241.42, 'cube': (250, 250, 250)}
     # config = {'fx': 224.5, 'fy': 230.5, 'cube': (300, 300, 300)}  # Creative Gesture Camera
@@ -75,18 +70,14 @@ if __name__ == '__main__':
     # di.fy = 230.5
     # di.ux = 160.
     # di.uy = 120.
-    rtp = RealtimeHandposePipeline(poseNet, config, di, comrefNet)
+    rtp = RealtimeHandposePipeline(poseNetParams, config, di,  verbose=False, comrefNet=comrefNetParams)
 
     # use filenames
     filenames = []
     for i in testSeqs[0].data:
         filenames.append(i.fileName)
-    # filenames = sorted(glob.glob('./capture2/*.png'))
-    rtp.processFiles(filenames)  # Threaded
+    dev = FileDevice(filenames, di)
 
-    # use depth camera
-    # from util.cameradevice import CreativeCameraDevice
-    # dev = CreativeCameraDevice()
-    # dev.start()
-    # rtp.processVideo(dev)  # Threaded
-    # dev.stop()
+    # # use depth camera
+    # dev = CreativeCameraDevice(mirror=True)
+    rtp.processVideoThreaded(dev)

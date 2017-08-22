@@ -52,7 +52,7 @@ class ScaleNetTrainer(NetTrainer):
     classdocs
     """
 
-    def __init__(self, poseNet=None, cfgParams=None, rng=None):
+    def __init__(self, poseNet=None, cfgParams=None, rng=None, subfolder='./eval/', numChunks=1):
         """
         Constructor
         
@@ -60,13 +60,8 @@ class ScaleNetTrainer(NetTrainer):
         :param cfgParams: initialized PoseRegNetTrainerParams
         """
 
-        # use lazy init instead
-        if poseNet is None:
-            return
-
-        super(ScaleNetTrainer, self).__init__(cfgParams, 8)
+        super(ScaleNetTrainer, self).__init__(cfgParams, 8, subfolder, numChunks)
         self.poseNet = poseNet
-        self.cfgParams = cfgParams
         self.rng = rng
 
         if not isinstance(cfgParams, ScaleNetTrainerParams):
@@ -80,8 +75,8 @@ class ScaleNetTrainer(NetTrainer):
         dnParams = self.poseNet.cfgParams
 
         # params
-        self.learning_rate = T.scalar('learning_rate', dtype=floatX)
-        self.momentum = T.scalar('momentum', dtype=floatX)
+        self.learning_rate = T.scalar('learning_rate')
+        self.momentum = T.scalar('momentum')
 
         # input
         self.index = T.lscalar()  # index to a [mini]batch
@@ -91,11 +86,11 @@ class ScaleNetTrainer(NetTrainer):
 
         # targets
         if self.poseNet.cfgParams.numJoints == 1 and self.poseNet.cfgParams.nDims == 1:
-            y = T.vector('y', dtype=floatX) # R^D
+            y = T.vector('y')  # R^D
         elif self.poseNet.cfgParams.numJoints == 1:
-            y = T.matrix('y', dtype=floatX) # R^Dx3
+            y = T.matrix('y')  # R^Dx3
         else:
-            y = T.tensor3('y', dtype=floatX) # R^Dx16x3
+            y = T.tensor3('y')  # R^Dx16x3
 
         # L2 error
         if self.poseNet.cfgParams.numJoints == 1 and self.poseNet.cfgParams.nDims == 1:
@@ -146,9 +141,8 @@ class ScaleNetTrainer(NetTrainer):
 
     def setupTrain(self):
         # train_model is a function that updates the model parameters by SGD
-
         opt = Optimizer(self.grads, self.params)
-        self.updates = opt.RMSProp(self.learning_rate, 0.9, 1.0/100.)
+        self.updates = opt.ADAM(self.learning_rate)
 
         batch_size = self.cfgParams.batch_size
         givens_train = {self.x[0]: self.train_data_x[self.index * batch_size:(self.index + 1) * batch_size]}
@@ -193,23 +187,14 @@ class ScaleNetTrainer(NetTrainer):
                                                outputs=self.cost,
                                                givens=givens_val_cost)
         print("done.")
+        self.validation_observer.append(self.validation_cost)
 
         print("compiling validation_error() ... ")
         self.validation_error = theano.function(inputs=[self.index],
                                                 outputs=self.errors,
                                                 givens=givens_val)
         print("done.")
-
-        # debug and so
-        print("compiling compute_val_descr() ... ")
-
-        givens_val_descr = {self.x[0]: self.val_data_x[self.index * batch_size:(self.index + 1) * batch_size]}
-        for i in range(1, self.poseNet.cfgParams.numInputs):
-            givens_val_descr[self.x[i]] = getattr(self, 'val_data_x'+str(i))[self.index * batch_size:(self.index + 1) * batch_size]
-        self.compute_val_descr = theano.function(inputs=[self.index],
-                                                 outputs=self.poseNet.output,
-                                                 givens=givens_val_descr)
-        print("done.")
+        self.validation_observer.append(self.validation_error)
 
     def setupDebugFunctions(self):
         batch_size = self.cfgParams.batch_size
@@ -223,3 +208,38 @@ class ScaleNetTrainer(NetTrainer):
                                                    givens=givens_train_descr)
         print("done.")
 
+    def augment_poses(self, macro_params, macro_idx, last, tidxs, idxs, new_data):
+        # augment the training data within current data range
+        for idx, i in zip(tidxs, idxs):
+            # com now in image coordinates
+            if (self.getNumMacroBatches() > 1) and (last is True):
+                img = self.train_data_xDBlast[i, 0].copy()
+                com = self.train_data_comDBlast[i].copy()
+                cube = self.train_data_cubeDBlast[i].copy()
+                gt3D = self.train_data_yDBlast[i].copy().reshape((1, 3))
+            else:
+                img = self.train_data_xDB[i, 0].copy()
+                com = self.train_data_comDB[i].copy()
+                cube = self.train_data_cubeDB[i].copy()
+                gt3D = self.train_data_yDB[i].copy().reshape((1, 3))
+
+            imgD, gt3D, cube, com2D, M = self.augmentCrop(
+                img, gt3D*(cube[2] / 2.), macro_params['args']['di'].joint3DToImg(com), cube, numpy.eye(3),
+                macro_params['args']['aug_modes'], macro_params['args']['hd'], macro_params['args']['normZeroOne'])
+
+            new_data['train_data_x'][idx] = imgD
+            new_data['train_data_y'][idx] = gt3D.flatten()
+
+        dsize = (int(new_data['train_data_x'].shape[2]//2), int(new_data['train_data_x'].shape[3]//2))
+        xstart = int(new_data['train_data_x'].shape[2]/2-dsize[0]/2)
+        xend = xstart + dsize[0]
+        ystart = int(new_data['train_data_x'].shape[3]/2-dsize[1]/2)
+        yend = ystart + dsize[1]
+        new_data['train_data_x1'][:] = new_data['train_data_x'][:, :, ystart:yend, xstart:xend]
+
+        dsize = (int(new_data['train_data_x'].shape[2]//4), int(new_data['train_data_x'].shape[3]//4))
+        xstart = int(new_data['train_data_x'].shape[2]/2-dsize[0]/2)
+        xend = xstart + dsize[0]
+        ystart = int(new_data['train_data_x'].shape[3]/2-dsize[1]/2)
+        yend = ystart + dsize[1]
+        new_data['train_data_x2'][:] = new_data['train_data_x'][:, :, ystart:yend, xstart:xend]

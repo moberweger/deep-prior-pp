@@ -49,6 +49,45 @@ class Optimizer(object):
         """
         self.grads = grads
         self.params = params
+        self.updates = []
+        self.shared = []
+
+        if len(grads) != len(params):
+            print "Warning: Size of gradients ({}) does not fit size of parameters ({})!".format(len(grads), len(params))
+
+    def ADAM(self, learning_rate=0.0002, beta1=0.9, beta2=0.999, epsilon=1e-8, gamma=1-1e-8):
+        """
+        Adam update rule by Kingma and Ba, ICLR 2015, version 2 (with momentum decay).
+        :param learning_rate: alpha in the paper, the step size
+        :param beta1: exponential decay rate of the 1st moment estimate
+        :param beta2: exponential decay rate of the 2nd moment estimate
+        :param epsilon: small epsilon to prevent divide-by-0 errors
+        :param gamma: exponential increase rate of beta1
+        :return: updates
+        """
+
+        t = theano.shared(numpy.cast[theano.config.floatX](1.0))  # timestep, for bias correction
+        beta1_t = beta1*gamma**(t-1.)  # decay the first moment running average coefficient
+
+        for param_i, grad_i in zip(self.params, self.grads):
+            mparam_i = theano.shared(numpy.zeros(param_i.get_value().shape, dtype=theano.config.floatX))  # 1st moment
+            self.shared.append(mparam_i)
+            vparam_i = theano.shared(numpy.zeros(param_i.get_value().shape, dtype=theano.config.floatX))  # 2nd moment
+            self.shared.append(vparam_i)
+
+            m = beta1_t * mparam_i + (1. - beta1_t) * grad_i  # new value for 1st moment estimate
+            v = beta2 * vparam_i + (1. - beta2) * T.sqr(grad_i)  # new value for 2nd moment estimate
+
+            m_unbiased = m / (1. - beta1**t)  # bias corrected 1st moment estimate
+            v_unbiased = v / (1. - beta2**t)  # bias corrected 2nd moment estimate
+            w = param_i - (learning_rate * m_unbiased) / (T.sqrt(v_unbiased) + epsilon)  # new parameter values
+
+            self.updates.append((mparam_i, m))
+            self.updates.append((vparam_i, v))
+            self.updates.append((param_i, w))
+        self.updates.append((t, t + 1.))
+
+        return self.updates
 
     def RMSProp(self, learning_rate=0.01, decay=0.9, epsilon=1.0 / 100.):
         """
@@ -59,11 +98,10 @@ class Optimizer(object):
         :return: update
         """
 
-        updates = []
-
         for param_i, grad_i in zip(self.params, self.grads):
             # Accumulate gradient
             msg = theano.shared(numpy.zeros(param_i.get_value().shape, dtype=theano.config.floatX))
+            self.shared.append(msg)
             new_mean_squared_grad = (decay * msg + (1 - decay) * T.sqr(grad_i))
 
             # Compute update
@@ -72,8 +110,8 @@ class Optimizer(object):
             delta_x_t = -learning_rate * grad_i / rms_grad_t
 
             # Apply update
-            updates.append((param_i, param_i + delta_x_t))
-            updates.append((msg, new_mean_squared_grad))
+            self.updates.append((param_i, param_i + delta_x_t))
+            self.updates.append((msg, new_mean_squared_grad))
 
-        return updates
+        return self.updates
 

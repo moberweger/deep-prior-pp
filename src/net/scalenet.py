@@ -1,26 +1,39 @@
-"""This file contains the bases classes for different networks
+"""Provides ScaleNet class that implements deep multi-scale CNNs.
 
-Created on 01.09.2014
+ScaleNet provides interface for building the CNN.
+ScaleNetParams is the parametrization of these CNNs.
 
-@author: Markus Oberweger <oberweger@icg.tugraz.at>
+Copyright 2015 Markus Oberweger, ICG,
+Graz University of Technology <oberweger@icg.tugraz.at>
+
+This file is part of DeepPrior.
+
+DeepPrior is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+DeepPrior is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
-from __future__ import print_function
 
-import theano
-import theano.tensor as T
-import time
 from net.convpoollayer import ConvPoolLayer, ConvPoolLayerParams
 from net.hiddenlayer import HiddenLayer, HiddenLayerParams
 from net.dropoutlayer import DropoutLayer, DropoutLayerParams
 from net.netbase import NetBase, NetBaseParams
 import numpy
-from util.helpers import ReLU
+from util.theano_helpers import ReLU
 
 
 class ScaleNetParams(NetBaseParams):
-    def __init__(self, type=0, nChan=1, wIn=128, hIn=128, batchSize=128, numJoints=16, nDims=3, resizeFactor = 2):
+    def __init__(self, type=0, nChan=1, wIn=128, hIn=128, batchSize=128, numJoints=16, nDims=3, resizeFactor = 2, shared_conv=False):
         '''
-       Init the parametrization
+        Init the parametrization
 
         :type typeID: int
         :param typeID: type of descr network
@@ -31,6 +44,7 @@ class ScaleNetParams(NetBaseParams):
         self.batch_size = batchSize
         self.numJoints = numJoints
         self.nDims = nDims
+        self.shared_conv = shared_conv
 
         if type == 1:
             self.numInputs = 3
@@ -118,6 +132,8 @@ class ScaleNet(NetBase):
 
         :type cfgParams: DescriptorNetParams
         '''
+        import theano
+        import theano.tensor as T
 
         if cfgParams is None:
             raise Exception("Cannot create a Net without config parameters (ie. cfgParams==None)")
@@ -153,15 +169,21 @@ class ScaleNet(NetBase):
                 else:
                     inp = self.layers[-1].output
 
+            cl = (None if (twin is None) else twin.layers[i])
+            if cl is None and self.cfgParams.shared_conv is True and self.cfgParams.inpConv-1 < i < self.cfgParams.numInputs*self.cfgParams.inpConv:
+                cl = self.layers[i % self.cfgParams.inpConv]
+
             id = layerParam.__class__.__name__[:-6]
             constructor = globals()[id]
             self.layers.append(constructor(rng,
                                            inputVar=inp,
                                            cfgParams=layerParam,
-                                           copyLayer=(None if (twin is None) else twin.layers[i]),
+                                           copyLayer=cl,
                                            layerNum=i))
 
             i += 1
 
         # assemble externally visible parameters
         self.output = self.layers[-1].output
+
+        self.load(self.cfgParams.loadFile)

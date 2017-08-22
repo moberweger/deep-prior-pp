@@ -31,13 +31,13 @@ import time
 import numpy
 import cPickle
 import re
-import theano
-import theano.tensor as T
 from net.convpoollayer import ConvPoolLayer, ConvPoolLayerParams
 from net.convlayer import ConvLayer, ConvLayerParams
 from net.hiddenlayer import HiddenLayer, HiddenLayerParams
 from net.poollayer import PoolLayer, PoolLayerParams
 from net.dropoutlayer import DropoutLayer, DropoutLayerParams
+from net.batchnormlayer import BatchNormLayer, BatchNormLayerParams
+from net.nonlinearitylayer import NonlinearityLayer, NonlinearityLayerParams
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -60,6 +60,7 @@ class NetBaseParams(object):
         self.layers = []
         self.inputDim = None
         self.outputDim = None
+        self.loadFile = None
 
     def getMemoryRequirement(self):
         """
@@ -103,7 +104,7 @@ class NetBase(object):
                     inp = self.layers[-1].output.flatten(2)
                     inp.name = "input_layer_{}".format(i)  # name this node as it is different from previous output
                 elif (len(layerParam.inputDim) == 4) and (len(self.layers[-1].cfgParams.outputDim) == 2):
-                    inp = T.reshape(self.layers[-1].output, layerParam.inputDim, ndim=4)
+                    inp = self.layers[-1].output.reshape(layerParam.inputDim, ndim=4)
                     inp.name = "input_layer_{}".format(i)  # name this node as it is different from previous output
                 else:
                     inp = self.layers[-1].output
@@ -121,15 +122,6 @@ class NetBase(object):
         # assemble externally visible parameters
         self.output = self.layers[-1].output
 
-        # TODO test
-        # Ngyuen Widrow initialization
-        # for l in range(len(self.layers)):
-        #     if isinstance(self.layers[l], HiddenLayer) or isinstance(self.layers[l], HiddenLayerInv):
-        #         if l > 0:
-        #             self.resetWeightsNW(rng, self.layers[l-1].cfgParams.getOutputRange(), self.layers[l], self.layers[l].cfgParams.getOutputRange())
-        #         else:
-        #             self.resetWeightsNW(rng, [-1, 1], self.layers[l], self.layers[l].cfgParams.getOutputRange())
-
     def __str__(self):
         """
         prints the parameters of the layers of the network
@@ -143,6 +135,17 @@ class NetBase(object):
             i += 1
 
         return cfg
+
+    @property
+    def all_params(self):
+        """
+        Get a list of all theano parameters for this network.
+        :return: list of theano variables
+        """
+        prms = [p for l in self.layers for p in l.params]
+
+        # only unique variables, remove shared weights from list
+        return dict((obj.auto_name, obj) for obj in prms).values()
 
     @property
     def params(self):
@@ -170,6 +173,17 @@ class NetBase(object):
             if b not in names:
                 raise UserWarning("Param {} not in model!".format(b))
         self._params_filter = bl
+
+    @property
+    def all_weights(self):
+        """
+        Get a list of all weights for this network.
+        :return: list of theano variables
+        """
+        prms = [p for l in self.layers for p in l.weights]
+
+        # only unique variables, remove shared weights from list
+        return dict((obj.auto_name, obj) for obj in prms).values()
 
     @property
     def weights(self):
@@ -205,6 +219,8 @@ class NetBase(object):
         :param timeit: print the timing information
         :return: output of the network
         """
+        import theano
+        import theano.tensor as T
 
         # Convert input data
         if not isinstance(inputs, list):
@@ -213,9 +229,9 @@ class NetBase(object):
         # All data must be same
         assert all(i.shape[0] == inputs[0].shape[0] for i in inputs[1:])
 
-        if self.dropoutEnabled():
-            print("WARNING: dropout is enabled in at least one layer for testing, DISABLING")
-            self.disableDropout()
+        if not self.isDeterministic():
+            print("WARNING: network is probabilistic for testing, DISABLING")
+            self.setDeterministic()
 
         floatX = theano.config.floatX  # @UndefinedVariable
         batch_size = self.cfgParams.batch_size
@@ -244,7 +260,7 @@ class NetBase(object):
                 for k in range(len(inputs)):
                     shape = list(inputs[k].shape)
                     shape[0] = batch_size
-                    input_pad.append(numpy.zeros(tuple(shape), dtype=floatX))
+                    input_pad.append(numpy.zeros(tuple(shape), dtype=inputs[k].dtype))
                     input_pad[k][0:inputs[k].shape[0]] = inputs[k][0:inputs[k].shape[0]]
                     input_pad[k][inputs[k].shape[0]:] = inputs[k][-1]
             else:
@@ -273,7 +289,7 @@ class NetBase(object):
                 for k in range(len(inputs)):
                     shape = list(inputs[k].shape)
                     shape[0] = batch_size
-                    input_pad.append(numpy.zeros(tuple(shape), dtype=floatX))
+                    input_pad.append(numpy.zeros(tuple(shape), dtype=inputs[k].dtype))
                     input_pad[k][0:inputs[k].shape[0]-i*batch_size] = inputs[k][i*batch_size:]
                     input_pad[k][inputs[k].shape[0]-i*batch_size:] = inputs[k][-1]
                 for k in range(len(inputs)):
@@ -297,35 +313,35 @@ class NetBase(object):
         else:
             return out[0][0:nSamp]
 
-    def enableDropout(self):
+    def unsetDeterministic(self):
         """
-        Enables dropout in all dropout layers, ie for training
+        Enables dropout and batch normalization in all layers, ie for training
         :return: None
         """
         for layer in self.layers:
-            if isinstance(layer, DropoutLayer):
-                layer.enableDropout()
+            if isinstance(layer, DropoutLayer) or isinstance(layer, BatchNormLayer):
+                layer.unsetDeterministic()
 
-    def disableDropout(self):
+    def setDeterministic(self):
         """
-        Disables dropout in all dropout layers, ie for classification
+        Disables dropout and batch normalizatoin in all layers, ie for testing
         :return: None
         """
         for layer in self.layers:
-            if isinstance(layer, DropoutLayer):
-                layer.disableDropout()
+            if isinstance(layer, DropoutLayer) or isinstance(layer, BatchNormLayer):
+                layer.unsetDeterministic()
 
-    def dropoutEnabled(self):
+    def isDeterministic(self):
         """
-        Disables dropout in all dropout layers, ie for classification
+        Checks if forward pass in network is deterministic
         :return: None
         """
         for layer in self.layers:
-            if isinstance(layer, DropoutLayer):
-                if layer.dropoutEnabled():
-                    return True
+            if isinstance(layer, DropoutLayer) or isinstance(layer, BatchNormLayer):
+                if not layer.isDeterministic():
+                    return False
 
-        return False
+        return True
 
     def hasDropout(self):
         """
@@ -344,7 +360,7 @@ class NetBase(object):
         Returns list of the weight values
         :return: list of weight values
         """
-        return self.recGetWeightVals(self.params)
+        return self.recGetWeightVals(self.all_params)
 
     @weightVals.setter
     def weightVals(self, value):
@@ -353,7 +369,7 @@ class NetBase(object):
         :param value: values for weights
         :return: None
         """
-        self.recSetWeightVals(self.params, value)
+        self.recSetWeightVals(self.all_params, value)
 
     def recSetWeightVals(self, param, value):
         """
@@ -396,6 +412,7 @@ class NetBase(object):
         for layer in self.layers:
             key = '{}-values'.format(layer.layerNum)
             state[key] = [p.get_value() for p in layer.params]
+            state[key].extend([p.get_value() for p in layer.params_nontrained])
         opener = gzip.open if filename.lower().endswith('.gz') else open
         handle = opener(filename, 'wb')
         cPickle.dump(state, handle, -1)
@@ -409,6 +426,8 @@ class NetBase(object):
                ".gz" then the input will automatically be gunzipped; otherwise the input will be treated as a "raw" pickle.
         :return: None
         """
+        if filename is None:
+            return
 
         opener = gzip.open if filename.lower().endswith('.gz') else open
         handle = opener(filename, 'rb')
@@ -420,22 +439,21 @@ class NetBase(object):
             print "Differences are:"
             print "\n".join(differences)
         for layer in self.layers:
-            if len(layer.params) != len(saved['{}-values'.format(layer.layerNum)]):
+            if (len(layer.params) + len(layer.params_nontrained)) != len(saved['{}-values'.format(layer.layerNum)]):
                 print "Warning: Layer parameters for layer {} do not match. Trying to fit on shape!".format(layer.layerNum)
                 n_assigned = 0
-                for p in layer.params:
+                for p in layer.params + layer.params_nontrained:
                     for v in saved['{}-values'.format(layer.layerNum)]:
                         if p.get_value().shape == v.shape:
                             p.set_value(v)
                             n_assigned += 1
 
-                if n_assigned != len(layer.params):
+                if n_assigned != (len(layer.params) + len(layer.params_nontrained)):
                     raise ImportError("Could not load all necessary variables!")
                 else:
                     print "Found fitting parameters!"
             else:
-                prms = layer.params
-                for p, v in zip(prms, saved['{}-values'.format(layer.layerNum)]):
+                for p, v in zip(layer.params + layer.params_nontrained, saved['{}-values'.format(layer.layerNum)]):
                     if p.get_value().shape == v.shape:
                         p.set_value(v)
                     else:

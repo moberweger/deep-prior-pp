@@ -54,6 +54,10 @@ extern uint32_t g_dFrames;
 
 // intrinsics
 extern float g_dIntrinsics[9];
+extern float g_cIntrinsics[9];
+
+// extrinsics
+extern float g_Extrinsics[12];
 
 extern "C" {
     void killds();

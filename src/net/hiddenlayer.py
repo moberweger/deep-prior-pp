@@ -24,10 +24,8 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 
 import inspect
 import numpy
-import theano
-import theano.tensor as T
+from net.layer import Layer
 from net.layerparams import LayerParams
-from util.helpers import ReLU
 
 __author__ = "Paul Wohlhart <wohlhart@icg.tugraz.at>, Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -40,7 +38,7 @@ __status__ = "Development"
 
 
 class HiddenLayerParams(LayerParams):
-    def __init__(self, inputDim=None, outputDim=None, activation=None):
+    def __init__(self, inputDim=None, outputDim=None, activation=None, hasBias=True, init_method=None):
         """
         :type inputDim: tuple of [int]
         :param inputDim: dimensionality of input
@@ -55,6 +53,8 @@ class HiddenLayerParams(LayerParams):
         super(HiddenLayerParams, self).__init__(inputDim, outputDim)
 
         self._activation = activation
+        self._hasbias = hasBias
+        self._init_method = init_method
 
     @property
     def activation(self):
@@ -64,6 +64,14 @@ class HiddenLayerParams(LayerParams):
     def activation(self, value):
         self._activation = value
 
+    @property
+    def hasBias(self):
+        return self._hasbias
+
+    @hasBias.setter
+    def hasBias(self, value):
+        self._hasbias = value
+
     def getMemoryRequirement(self):
         """
         Get memory requirements of weights
@@ -71,22 +79,8 @@ class HiddenLayerParams(LayerParams):
         """
         return ((self.inputDim[1] * self.outputDim[1]) + self.outputDim[1]) * 4  # sizeof(theano.config.floatX)
 
-    def getOutputRange(self):
-        """
-        Get output range of layer
-        :return: output range as tuple
-        """
-        if self._activation == T.tanh:
-            return [-1, 1]
-        elif self._activation == T.nnet.sigmoid:
-            return [0, 1]
-        elif self._activation == ReLU:
-            return [0, numpy.inf]
-        else:
-            return [-numpy.inf, numpy.inf]
 
-
-class HiddenLayer(object):
+class HiddenLayer(Layer):
     def __init__(self, rng, inputVar, cfgParams, copyLayer=None, layerNum=None):
         """
         Typical hidden layer of a MLP: units are fully-connected.
@@ -103,6 +97,10 @@ class HiddenLayer(object):
 
         :type cfgParams: HiddenLayerParams
         """
+        import theano
+        import theano.tensor as T
+
+        super(HiddenLayer, self).__init__(rng)
 
         assert isinstance(cfgParams, HiddenLayerParams)
 
@@ -123,45 +121,39 @@ class HiddenLayer(object):
         floatX = theano.config.floatX  # @UndefinedVariable
 
         if copyLayer is None:
-            if activation == ReLU:
-                W_values = numpy.asarray(rng.normal(loc=0.0, scale=0.01, size=(n_in, n_out)), dtype=floatX)
-            elif activation == theano.tensor.nnet.sigmoid:
-                W_values = 4. * numpy.asarray(rng.uniform(low=-numpy.sqrt(6. / (n_in + n_out)),
-                                                          high=numpy.sqrt(6. / (n_in + n_out)),
-                                                          size=(n_in, n_out)), dtype=floatX)
-            else:  # activation == T.tanh
-                W_values = numpy.asarray(rng.uniform(low=-numpy.sqrt(6. / (n_in + n_out)),
-                                                     high=numpy.sqrt(6. / (n_in + n_out)),
-                                                     size=(n_in, n_out)), dtype=floatX)
+            wInitVals = self.getInitVals((n_in, n_out), 'fc', act_fn=cfgParams.activation_str, method=cfgParams._init_method)
+            self.W = theano.shared(value=wInitVals, name='W{}'.format(layerNum), borrow=True)
 
-            self.W = theano.shared(value=W_values, name='W{}'.format(layerNum), borrow=True)
-
-            if activation == ReLU:
+            if self.cfgParams.hasBias is True:
                 b_values = numpy.zeros((n_out,), dtype=floatX)
-            else:
-                b_values = numpy.zeros((n_out,), dtype=floatX)
-            self.b = theano.shared(value=b_values, name='b{}'.format(layerNum), borrow=True)
+                self.b = theano.shared(value=b_values, name='b{}'.format(layerNum), borrow=True)
 
         else:
             self.W = copyLayer.W
-            self.b = copyLayer.b
+            if self.cfgParams.hasBias is True:
+                self.b = copyLayer.b
 
-        lin_output = T.dot(inputVar, self.W) + self.b
+        lin_output = T.dot(inputVar, self.W)
+
+        if self.cfgParams.hasBias is True:
+            lin_output = lin_output + self.b
+        self.output_pre_act = lin_output
+
         if activation is None:
             self.output = lin_output
             self.output.name = 'output_layer_{}'.format(self.layerNum)
-            self.params = [self.W, self.b]
+            self.params = [self.W, self.b] if self.cfgParams.hasBias else [self.W]
         else:
             if inspect.isfunction(activation) and len(inspect.getargspec(activation).args) == 2:
                 c_values = numpy.ones((n_out,), dtype=floatX)*0.5
                 self.c = theano.shared(value=c_values, name='c{}'.format(layerNum), borrow=True)
                 self.output = activation(lin_output, self.c)
                 self.output.name = 'output_layer_{}'.format(self.layerNum)
-                self.params = [self.W, self.b, self.c]
+                self.params = [self.W, self.b, self.c] if self.cfgParams.hasBias else [self.W, self.c]
             else:
                 self.output = activation(lin_output)
                 self.output.name = 'output_layer_{}'.format(self.layerNum)
-                self.params = [self.W, self.b]
+                self.params = [self.W, self.b] if self.cfgParams.hasBias else [self.W]
 
         # parameters of the model
         self.weights = [self.W]
@@ -171,5 +163,7 @@ class HiddenLayer(object):
         Print configuration of layer
         :return: configuration string
         """
-        return "inputDim {}, outputDim {}, activiation {}".format(self.cfgParams.inputDim, self.cfgParams.outputDim,
-                                                                  self.cfgParams.activation_str)
+        return "inputDim {}, outputDim {}, activiation {}, hasBias {}".format(self.cfgParams.inputDim,
+                                                                              self.cfgParams.outputDim,
+                                                                              self.cfgParams.activation_str,
+                                                                              self.cfgParams.hasBias)

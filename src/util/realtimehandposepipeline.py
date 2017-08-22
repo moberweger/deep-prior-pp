@@ -22,11 +22,18 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from multiprocessing import Process, Queue, Value
+from collections import deque
+from multiprocessing import Process, Manager, Value
 import cv2
 import time
 import numpy
+import copy
+from data.transformations import rotatePoints3D
+from net.poseregnet import PoseRegNet, PoseRegNetParams
+from net.resnet import ResNet, ResNetParams
+from net.scalenet import ScaleNet, ScaleNetParams
 from util.handdetector import HandDetector
+from util.handpose_evaluation import ICVLHandposeEvaluation, NYUHandposeEvaluation, MSRAHandposeEvaluation
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -52,12 +59,16 @@ class RealtimeHandposePipeline(object):
     HAND_LEFT = 0
     HAND_RIGHT = 1
 
-    def __init__(self, poseNet, config, di, comrefNet=None):
+    # different detectors
+    DETECTOR_COM = 0
+
+    def __init__(self, poseNet, config, di, verbose=False, comrefNet=None):
         """
         Initialize data
         :param poseNet: network for pose estimation
         :param config: configuration
         :param di: depth importer
+        :param verbose: print additional info
         :param comrefNet: refinement network from center of mass detection
         :return: None
         """
@@ -68,67 +79,73 @@ class RealtimeHandposePipeline(object):
         self.comrefNet = comrefNet
         # configuration
         self.config = config
-        self.initialconfig = config
+        self.initialconfig = copy.deepcopy(config)
         # synchronization between threads
-        self.queue = Queue()
+        self.queue = Manager().dict(fid=0, crop=numpy.ones((128, 128), dtype='float32'),
+                                    com3D=numpy.asarray([0, 0, 300]),
+                                    frame=numpy.ones((240, 320), dtype='float32'), M=numpy.eye(3))
+        self.start = Value('b', False)
         self.stop = Value('b', False)
         # for calculating FPS
         self.lastshow = time.time()
+        self.runningavg_fps = deque(100*[0], 100)
+        self.verbose = verbose
         # hand left/right
         self.hand = self.HAND_LEFT
         # initial state
         self.state = self.STATE_IDLE
+        # detector
+        self.detection = self.DETECTOR_COM
         # hand size estimation
         self.handsizes = []
         self.numinitframes = 50
         # hand tracking or detection
         self.tracking = False
         self.lastcom = (0, 0, 0)
+        # show different results
+        self.show_pose = False
+        self.show_crop = False
 
+    def initNets(self):
+        """
+        Init network in current process
+        :return: 
+        """
         # Force network to compile output in the beginning
-        self.poseNet.computeOutput(numpy.zeros(self.poseNet.cfgParams.inputDim, dtype='float32'))
+        if isinstance(self.poseNet, PoseRegNetParams):
+            self.poseNet = PoseRegNet(numpy.random.RandomState(23455), cfgParams=self.poseNet)
+            self.poseNet.computeOutput(numpy.zeros(self.poseNet.cfgParams.inputDim, dtype='float32'))
+        elif isinstance(self.poseNet, ResNetParams):
+            self.poseNet = ResNet(numpy.random.RandomState(23455), cfgParams=self.poseNet)
+            self.poseNet.computeOutput(numpy.zeros(self.poseNet.cfgParams.inputDim, dtype='float32'))
+        else:
+            raise RuntimeError("Unknown pose estimation method!")
+
         if self.comrefNet is not None:
-            self.comrefNet.computeOutput([numpy.zeros(sz, dtype='float32') for sz in self.comrefNet.cfgParams.inputDim])
+            if isinstance(self.comrefNet, ScaleNetParams):
+                self.comrefNet = ScaleNet(numpy.random.RandomState(23455), cfgParams=self.comrefNet)
+                self.comrefNet.computeOutput([numpy.zeros(sz, dtype='float32') for sz in self.comrefNet.cfgParams.inputDim])
+            else:
+                raise RuntimeError("Unknown refine method!")
 
-    def threadProducerFiles(self, filenames):
-        """
-        Thread that produces frames from files
-        :param filenames: list of filenames
-        :return: None
-        """
-
-        fid = 0
-        for f in filenames:
-            if self.stop.value:
-                break
-            # Capture frame-by-frame
-            print("Produce frame: {}".format(fid))
-            start = time.time()
-            frame = self.importer.loadDepthMap(f)
-            print("{}ms loading".format((time.time() - start)*1000.))
-
-            startd = time.time()
-            crop, M, com3D = self.detect(frame.copy())
-            print("{}ms detection".format((time.time() - startd)*1000.))
-
-            frm = {'fid': fid, 'crop': crop, 'com3D': com3D, 'frame': frame, 'M': M}
-            self.queue.put(frm)
-            fid += 1
-        # we are done
-        self.stop.value = True
-        print "Exiting producer..."
-        return True
-
-    def threadProducerVideo(self, device):
+    def threadProducer(self, device):
         """
         Thread that produces frames from video capture
         :param device: device
         :return: None
         """
+        device.start()
+
+        self.initNets()
 
         fid = 0
         while True:
-            if self.stop.value:
+            # We only start when consumer is ready
+            if self.start.value is False:
+                time.sleep(0.1)
+                continue
+
+            if self.stop.value is True:
                 break
             # Capture frame-by-frame
             start = time.time()
@@ -137,18 +154,20 @@ class RealtimeHandposePipeline(object):
                 print "Error while reading frame."
                 time.sleep(0.1)
                 continue
-            print("{}ms capturing".format((time.time() - start)*1000.))
+            if self.verbose is True:
+                print("{}ms capturing".format((time.time() - start)*1000.))
 
             startd = time.time()
             crop, M, com3D = self.detect(frame.copy())
-            print("{}ms detection".format((time.time() - startd)*1000.))
+            if self.verbose is True:
+                print("{}ms detection".format((time.time() - startd)*1000.))
 
-            frm = {'fid': fid, 'crop': crop, 'com3D': com3D, 'frame': frame, 'M': M}
-            self.queue.put(frm)
+            self.queue.update(fid=fid, crop=crop, com3D=com3D, frame=frame, M=M)
             fid += 1
+
         # we are done
-        self.stop.value = True
         print "Exiting producer..."
+        device.stop()
         return True
 
     def threadConsumer(self):
@@ -156,57 +175,42 @@ class RealtimeHandposePipeline(object):
         Thread that consumes the frames, estimate the pose and display
         :return: None
         """
+
+        self.initNets()
+        # Nets are compiled, ready to run
+        self.start.value = True
         
         while True:
-            if self.stop.value:
+            if self.stop.value is True:
                 break
-            try:
-                frm = self.queue.get(block=False)
-            except:
-                if not self.stop.value:
-                    continue
-                else:
-                    break
+
+            frm = copy.deepcopy(self.queue)
 
             startp = time.time()
-            pose = self.estimatePose(frm['crop']) * self.config['cube'][2]/2. + frm['com3D']
-            print("{}ms pose".format((time.time() - startp)*1000.))
+            pose = self.estimatePose(frm['crop'], frm['com3D'])
+            pose = pose * self.config['cube'][2]/2. + frm['com3D']
+            if self.verbose is True:
+                print("{}ms pose".format((time.time() - startp)*1000.))
 
             # Display the resulting frame
             starts = time.time()
-            img = self.show(frm['frame'], pose, frm['M'])
+            img, poseimg = self.show(frm['frame'], pose)
             img = self.addStatusBar(img)
             cv2.imshow('frame', img)
             self.lastshow = time.time()
+            if self.show_pose:
+                cv2.imshow('pose', poseimg)
+            if self.show_crop:
+                cv2.imshow('crop', numpy.clip((frm['crop'] + 1.)*128., 0, 255).astype('uint8'))
             self.processKey(cv2.waitKey(1) & 0xFF)
-            print("{}ms display".format((time.time() - starts)*1000.))
+            if self.verbose is True:
+                print("{}ms display".format((time.time() - starts)*1000.))
 
         cv2.destroyAllWindows()
+        # we are done
+        self.start.value = False
         print "Exiting consumer..."
         return True
-
-    def processFilesThreaded(self, filenames):
-        """
-        Run detector from files
-        :param filenames: filenames to load
-        :return: None
-        """
-
-        allstart = time.time()
-        if not isinstance(filenames, list):
-            raise ValueError("Files must be list of filenames.")
-
-        p = Process(target=self.threadProducerFiles, args=[filenames])
-        p.daemon = True
-        c = Process(target=self.threadConsumer, args=[])
-        c.daemon = True
-        p.start()
-        c.start()
-
-        c.join()
-        p.join()
-
-        print("DONE in {}s".format((time.time() - allstart)))
 
     def processVideoThreaded(self, device):
         """
@@ -215,8 +219,10 @@ class RealtimeHandposePipeline(object):
         :return: None
         """
 
-        p = Process(target=self.threadProducerVideo, args=[device])
+        print "Create producer process..."
+        p = Process(target=self.threadProducer, args=[device])
         p.daemon = True
+        print"Create consumer process..."
         c = Process(target=self.threadConsumer, args=[])
         c.daemon = True
         p.start()
@@ -231,11 +237,14 @@ class RealtimeHandposePipeline(object):
         :param device: device id
         :return: None
         """
+        device.start()
+
+        self.initNets()
 
         i = 0
         while True:
             i += 1
-            if self.stop.value:
+            if self.stop.value is True:
                 break
             # Capture frame-by-frame
             start = time.time()
@@ -244,74 +253,39 @@ class RealtimeHandposePipeline(object):
                 print "Error while reading frame."
                 time.sleep(0.1)
                 continue
-            print("{}ms capturing".format((time.time() - start)*1000.))
+            if self.verbose is True:
+                print("{}ms capturing".format((time.time() - start)*1000.))
 
             startd = time.time()
             crop, M, com3D = self.detect(frame.copy())
-            print("{}ms detection".format((time.time() - startd)*1000.))
+            if self.verbose is True:
+                print("{}ms detection".format((time.time() - startd)*1000.))
 
             startp = time.time()
-            pose = self.estimatePose(crop) * self.config['cube'][2]/2. + com3D
-            print("{}ms pose".format((time.time() - startp)*1000.))
+            pose = self.estimatePose(crop, com3D)
+            pose = pose*self.config['cube'][2]/2. + com3D
+            if self.verbose is True:
+                print("{}ms pose".format((time.time() - startp)*1000.))
 
             # Display the resulting frame
             starts = time.time()
-            img = self.show(frame, pose)
+            img, poseimg = self.show(frame, pose)
+
             img = self.addStatusBar(img)
             cv2.imshow('frame', img)
             self.lastshow = time.time()
-            cv2.imshow('crop', crop)
+            if self.show_pose:
+                cv2.imshow('pose', poseimg)
+            if self.show_crop:
+                cv2.imshow('crop', numpy.clip((crop + 1.)*128., 0, 255).astype('uint8'))
             self.processKey(cv2.waitKey(1) & 0xFF)
-            print("{}ms display".format((time.time() - starts)*1000.))
-
-            print("-> {}ms per frame".format((time.time() - start)*1000.))
+            if self.verbose is True:
+                print("{}ms display".format((time.time() - starts)*1000.))
+                print("-> {}ms per frame".format((time.time() - start)*1000.))
 
         # When everything done, release the capture
         cv2.destroyAllWindows()
-
-    def processFiles(self, filenames):
-        """
-        Run detector from files
-        :param filenames: filenames to load
-        :return: None
-        """
-
-        allstart = time.time()
-        if not isinstance(filenames, list):
-            raise ValueError("Files must be list of filenames.")
-
-        i = 0
-        for f in filenames:
-            i += 1
-            if self.stop.value:
-                break
-            # Capture frame-by-frame
-            start = time.time()
-            frame = self.importer.loadDepthMap(f)
-            print("{}ms loading".format((time.time() - start)*1000.))
-
-            startd = time.time()
-            crop, M, com3D = self.detect(frame.copy())
-            print("{}ms detection".format((time.time() - startd)*1000.))
-
-            startp = time.time()
-            pose = self.estimatePose(crop) * self.config['cube'][2]/2. + com3D
-            print("{}ms pose".format((time.time() - startp)*1000.))
-
-            # Display the resulting frame
-            starts = time.time()
-            img = self.show(frame, pose)
-            img = self.addStatusBar(img)
-            cv2.imshow('frame', img)
-            self.lastshow = time.time()
-            cv2.imshow('crop', crop)
-            self.processKey(cv2.waitKey(1) & 0xFF)
-            print("{}ms display".format((time.time() - starts)*1000.))
-
-            print("-> {}ms per frame".format((time.time() - start)*1000.))
-
-        print("DONE in {}s".format((time.time() - allstart)))
-        cv2.destroyAllWindows()
+        device.stop()
 
     def detect(self, frame):
         """
@@ -331,7 +305,8 @@ class RealtimeHandposePipeline(object):
 
         if self.state == self.STATE_INIT:
             self.handsizes.append(handsz)
-            print numpy.median(numpy.asarray(self.handsizes), axis=0)
+            if self.verbose is True:
+                print numpy.median(numpy.asarray(self.handsizes), axis=0)
         else:
             self.handsizes = []
 
@@ -343,46 +318,59 @@ class RealtimeHandposePipeline(object):
         if numpy.allclose(loc, 0):
             return numpy.zeros((self.poseNet.cfgParams.inputDim[2], self.poseNet.cfgParams.inputDim[3]), dtype='float32'), numpy.eye(3), loc
         else:
-            crop, M, com = hd.cropArea3D(loc, size=self.config['cube'], dsize=(self.poseNet.layers[0].cfgParams.inputDim[2], self.poseNet.layers[0].cfgParams.inputDim[3]))
+            crop, M, com = hd.cropArea3D(com=loc, size=self.config['cube'],
+                                         dsize=(self.poseNet.layers[0].cfgParams.inputDim[2], self.poseNet.layers[0].cfgParams.inputDim[3]))
             com3D = self.importer.jointImgTo3D(com)
-            crop[crop == 0] = com3D[2] + (self.config['cube'][2] / 2.)
-            crop[crop >= com3D[2] + (self.config['cube'][2] / 2.)] = com3D[2] + (self.config['cube'][2] / 2.)
-            crop[crop <= com3D[2] - (self.config['cube'][2] / 2.)] = com3D[2] - (self.config['cube'][2] / 2.)
+            sc = (self.config['cube'][2] / 2.)
+            crop[crop == 0] = com3D[2] + sc
+            crop.clip(com3D[2] - sc, com3D[2] + sc)
             crop -= com3D[2]
-            crop /= (self.config['cube'][2] / 2.)
+            crop /= sc
             return crop, M, com3D
 
-    def estimatePose(self, crop):
+    def estimatePose(self, crop, com3D):
         """
         Estimate the hand pose
         :param crop: cropped hand depth map
+        :param com3D: com detection crop position
         :return: joint positions
         """
 
         # mirror hand if left/right changed
         if self.hand == self.HAND_LEFT:
-            inp = crop[None, None, :, :]
+            inp = crop[None, None, :, :].astype('float32')
         else:
-            inp = crop[None, None, :, ::-1]
+            inp = crop[None, None, :, ::-1].astype('float32')
 
         jts = self.poseNet.computeOutput(inp)
+        jj = jts[0].reshape((-1, 3))
+
+        if 'invX' in self.config:
+            if self.config['invX'] is True:
+                # mirror coordinates
+                jj[:, 1] *= (-1.)
+
+        if 'invY' in self.config:
+            if self.config['invY'] is True:
+                # mirror coordinates
+                jj[:, 0] *= (-1.)
 
         # mirror pose if left/right changed
-        if self.hand == self.HAND_LEFT:
-            return jts[0].reshape(self.poseNet.cfgParams.numJoints, 3)
-        else:
-            jj = jts[0].reshape(self.poseNet.cfgParams.numJoints, 3)
+        if self.hand == self.HAND_RIGHT:
             # mirror coordinates
             jj[:, 0] *= (-1.)
-            return jj
+        return jj
 
-    def show(self, frame, pose):
+    def show(self, frame, handpose):
         """
-        Show depth with overlayed joints
+        Show depth with overlaid joints
         :param frame: depth frame
-        :param pose: joint positions
+        :param handpose: joint positions
         :return: image
         """
+        upsample = 1.
+        if 'upsample' in self.config:
+            upsample = self.config['upsample']
 
         # plot depth image with annotations
         imgcopy = frame.copy()
@@ -396,36 +384,47 @@ class RealtimeHandposePipeline(object):
         imgcopy = imgcopy.astype('uint8')
         imgcopy = cv2.cvtColor(imgcopy, cv2.COLOR_GRAY2BGR)
 
-        jtI = self.importer.joints3DToImg(pose)
-        for i in range(jtI.shape[0]):
+        if not numpy.allclose(upsample, 1):
+            imgcopy = cv2.resize(imgcopy, dsize=None, fx=upsample, fy=upsample, interpolation=cv2.INTER_LINEAR)
+
+        if handpose.shape[0] == 16:
+            hpe = ICVLHandposeEvaluation(numpy.zeros((3, 3)), numpy.zeros((3, 3)))
+        elif handpose.shape[0] == 14:
+            hpe = NYUHandposeEvaluation(numpy.zeros((3, 3)), numpy.zeros((3, 3)))
+        elif handpose.shape[0] == 21:
+            hpe = MSRAHandposeEvaluation(numpy.zeros((3, 3)), numpy.zeros((3, 3)))
+        else:
+            raise ValueError("Invalid number of joints {}".format(handpose.shape[0]))
+
+        jtI = self.importer.joints3DToImg(handpose)
+        jtI[:, 0:2] -= numpy.asarray([frame.shape[0]//2, frame.shape[1]//2])
+        jtI[:, 0:2] *= upsample
+        jtI[:, 0:2] += numpy.asarray([imgcopy.shape[0]//2, imgcopy.shape[1]//2])
+        for i in xrange(handpose.shape[0]):
             cv2.circle(imgcopy, (jtI[i, 0], jtI[i, 1]), 3, (255, 0, 0), -1)
 
-        import matplotlib
-        if pose.shape[0] == 16:
-            jointConnections = [[0, 1], [1, 2], [2, 3], [0, 4], [4, 5], [5, 6], [0, 7], [7, 8], [8, 9], [0, 10],
-                                 [10, 11], [11, 12], [0, 13], [13, 14], [14, 15]]
-            jointConnectionColors = [matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.00, 1, 0.6]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.00, 1, 0.8]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.00, 1, 1]]]))[0, 0],
-                                      matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.33, 1, 0.6]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.33, 1, 0.8]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.33, 1, 1]]]))[0, 0],
-                                      matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.50, 1, 0.6]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.50, 1, 0.8]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.50, 1, 1]]]))[0, 0],
-                                      matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.66, 1, 0.6]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.66, 1, 0.8]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.66, 1, 1]]]))[0, 0],
-                                      matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.83, 1, 0.6]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.83, 1, 0.8]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.83, 1, 1]]]))[0, 0]]
-        elif pose.shape[0] == 14:
-            jointConnections = [[13, 1], [1, 0], [13, 3], [3, 2], [13, 5], [5, 4], [13, 7], [7, 6], [13, 10],
-                                     [10, 9], [9, 8], [13, 11], [13, 12]]
-            jointConnectionColors = [matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.00, 1, 0.7]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.00, 1, 1]]]))[0, 0],
-                                          matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.33, 1, 0.7]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.33, 1, 1]]]))[0, 0],
-                                          matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.50, 1, 0.7]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.50, 1, 1]]]))[0, 0],
-                                          matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.66, 1, 0.7]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.66, 1, 1]]]))[0, 0],
-                                          matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.83, 1, 0.6]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.83, 1, 0.8]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.83, 1, 1]]]))[0, 0],
-                                          matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.16, 1, 0.7]]]))[0, 0], matplotlib.colors.hsv_to_rgb(numpy.asarray([[[0.16, 1, 1]]]))[0, 0]]
-        else:
-            raise ValueError("Invalid number of joints")
+        for i in xrange(len(hpe.jointConnections)):
+            cv2.line(imgcopy, (jtI[hpe.jointConnections[i][0], 0], jtI[hpe.jointConnections[i][0], 1]),
+                     (jtI[hpe.jointConnections[i][1], 0], jtI[hpe.jointConnections[i][1], 1]),
+                     255.*hpe.jointConnectionColors[i], 2)
 
-        for i in range(len(jointConnections)):
-            cv2.line(imgcopy, (jtI[jointConnections[i][0], 0], jtI[jointConnections[i][0], 1]),
-                     (jtI[jointConnections[i][1], 0], jtI[jointConnections[i][1], 1]), 255.*jointConnectionColors[i], 2)
+        # rotate 3D pose and project to 2D
+        jtP = rotatePoints3D(handpose, handpose[self.importer.crop_joint_idx], 0., 90., 0.)
 
-        return imgcopy
+        poseimg = numpy.zeros_like(imgcopy)
+        jtP = self.importer.joints3DToImg(jtP)
+        jtP[:, 0:2] -= numpy.asarray([frame.shape[0]//2, frame.shape[1]//2])
+        jtP[:, 0:2] *= upsample
+        jtP[:, 0:2] += numpy.asarray([imgcopy.shape[0]//2, imgcopy.shape[1]//2])
+        for i in xrange(handpose.shape[0]):
+            cv2.circle(poseimg, (jtP[i, 0], jtP[i, 1]), 3, (255, 0, 0), -1)
+
+        for i in xrange(len(hpe.jointConnections)):
+            cv2.line(poseimg, (jtP[hpe.jointConnections[i][0], 0], jtP[hpe.jointConnections[i][0], 1]),
+                     (jtP[hpe.jointConnections[i][1], 0], jtP[hpe.jointConnections[i][1], 1]),
+                     255.*hpe.jointConnectionColors[i], 2)
+
+        return imgcopy, poseimg
 
     def addStatusBar(self, img):
         """
@@ -440,16 +439,25 @@ class RealtimeHandposePipeline(object):
 
         # FPS text
         fps = 1./(time.time()-self.lastshow)
-        cv2.putText(retimg, "FPS {0:2.2f}".format(fps), (20, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+        self.runningavg_fps.append(fps)
+        avg_fps = numpy.mean(self.runningavg_fps)
+        cv2.putText(retimg, "FPS {0:2.1f}".format(avg_fps), (20, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand text
         cv2.putText(retimg, "Left" if self.hand == self.HAND_LEFT else "Right", (80, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand size
-        cv2.putText(retimg, "({0:d}, {1:d}, {2:d})".format(self.config['cube'][0], self.config['cube'][1], self.config['cube'][2]), (120, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+        cv2.putText(retimg, "HC-{0:d}".format(self.config['cube'][0]), (120, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand tracking mode, tracking or detection
-        cv2.putText(retimg, "T" if self.tracking else "D", (200, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+        cv2.putText(retimg, "T" if self.tracking else "D", (260, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+
+        # hand detection mode, COM or CNN
+        if self.detection == self.DETECTOR_COM:
+            mode = "COM"
+        else:
+            mode = "???"
+        cv2.putText(retimg, mode, (280, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # status symbol
         if self.state == self.STATE_IDLE:
@@ -478,23 +486,18 @@ class RealtimeHandposePipeline(object):
             else:
                 self.hand = self.HAND_LEFT
         elif key == ord('+'):
-            lst = list(self.config['cube'])
-            lst[0] += 10
-            lst[1] += 10
-            lst[2] += 10
-            self.config['cube'] = tuple(lst)
+            self.config['hand_cube'] = tuple([lst + 10 for lst in list(self.config['hand_cube'])])
         elif key == ord('-'):
-            lst = list(self.config['cube'])
-            lst[0] -= 10
-            lst[1] -= 10
-            lst[2] -= 10
-            self.config['cube'] = tuple(lst)
+            self.config['hand_cube'] = tuple([lst - 10 for lst in list(self.config['hand_cube'])])
         elif key == ord('r'):
             self.reset()
         elif key == ord('i'):
             self.state = self.STATE_INIT
         elif key == ord('t'):
             self.tracking = not self.tracking
+        elif key == ord('s'):
+            self.show_crop = not self.show_crop
+            self.show_pose = not self.show_pose
         else:
             pass
 
@@ -504,4 +507,5 @@ class RealtimeHandposePipeline(object):
         :return: None
         """
         self.state = self.STATE_IDLE
-        self.config = self.initialconfig
+        self.config = copy.deepcopy(self.initialconfig)
+        self.detection = self.DETECTOR_COM

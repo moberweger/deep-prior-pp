@@ -23,6 +23,7 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import time
 import numpy
 import cv2
 import scipy.misc
@@ -79,6 +80,19 @@ class CameraDevice(object):
         im.save(file_name+'.png')
         # read with: b = scipy.misc.imread('my16bit.png')
 
+    def saveRGB(self, data, file_name):
+        """
+        Save data to file 3x8bit color
+        :param data: data
+        :param file_name: file name
+        :return: None
+        """
+
+        assert len(data.shape) == 3
+
+        scipy.misc.imsave(file_name+'.png', data)
+        # read with: b = scipy.misc.imread('my.png')
+
     def getDepth(self):
         """
         Return a median smoothed depth image
@@ -86,7 +100,7 @@ class CameraDevice(object):
         """
         raise NotImplementedError("!")
 
-    def getColor(self):
+    def getRGB(self):
         """
         Return a bit color image
         :return: color image as numpy array
@@ -99,6 +113,17 @@ class CameraDevice(object):
         :return: grayscale image as numpy array
         """
         raise NotImplementedError("!")
+
+    def getRGBD(self):
+        """
+        Return a color + depth image
+        :return: RGB-D image as 4-channel numpy array
+        """
+
+        ret_rgb, c = self.getRGB()
+        ret_d, d = self.getDepth()
+
+        return ret_rgb and ret_d, c.astype('float32'), d.astype('float32')
 
     def getLastColorNum(self):
         """
@@ -118,6 +143,20 @@ class CameraDevice(object):
         """
         Get intrinsic matrix of depth camera
         :return: 3x3 intrinsic camera matrix
+        """
+        raise NotImplementedError("!")
+
+    def getColorIntrinsics(self):
+        """
+        Get intrinsic matrix of color camera
+        :return: 3x3 intrinsic camera matrix
+        """
+        raise NotImplementedError("!")
+
+    def getExtrinsics(self):
+        """
+        Get extrinsic matrix from color to depth camera
+        :return: 4x3 extrinsic camera matrix
         """
         raise NotImplementedError("!")
 
@@ -160,16 +199,16 @@ class CreativeCameraDevice(CameraDevice):
         depth = cv2.medianBlur(depth, 3)
         return (numpy.count_nonzero(depth) != 0), numpy.asarray(depth, numpy.float32)
 
-    def getColor(self):
+    def getRGB(self):
         """
         Return a bit color image
         :return: color image as numpy array
         """
 
         if self.mirror:
-            image = dsc.getColorMap()[:, ::-1, :]
+            image = dsc.getColourMap()[:, ::-1, :]
         else:
-            image = dsc.getColorMap()
+            image = dsc.getColourMap()
         return (numpy.count_nonzero(image) != 0), image
 
     def getGrayScale(self):
@@ -207,6 +246,20 @@ class CreativeCameraDevice(CameraDevice):
 
         return dsc.getDepthIntrinsics()
 
+    def getColorIntrinsics(self):
+        """
+        Get intrinsic matrix of color camera
+        :return: 3x3 intrinsic camera matrix
+        """
+        return dsc.getColorIntrinsics()
+
+    def getExtrinsics(self):
+        """
+        Get extrinsic matrix from color to depth camera
+        :return: 4x3 extrinsic camera matrix
+        """
+        return dsc.getExtrinsics()
+
 
 class DepthSenseCameraDevice(CameraDevice):
     """
@@ -237,6 +290,14 @@ class DepthSenseCameraDevice(CameraDevice):
         self.depth.set_resolution_preset(openni.RES_VGA)
         self.depth.fps = 30
 
+        # Create a color generator
+        self.color = openni.ImageGenerator()
+        self.color.create(self.ctx)
+
+        # Set it to VGA maps at 30 FPS
+        self.color.set_resolution_preset(openni.RES_VGA)
+        self.color.fps = 30
+
         # Start generating
         self.ctx.start_generating_all()
 
@@ -265,3 +326,132 @@ class DepthSenseCameraDevice(CameraDevice):
             dpt = numpy.asarray(self.depth.get_tuple_depth_map(), dtype='float32').reshape(self.depth.map.height, self.depth.map.width)
 
             return True, dpt
+
+    def getRGB(self):
+        """
+        Return a median smoothed depth image
+        :return: depth data as numpy array
+        """
+
+        # Get the pixel at these coordinates
+        try:
+            # Wait for new data to be available
+            self.ctx.wait_one_update_all(self.color)
+        except openni.OpenNIError, err:
+            print "Failed updating data:", err
+        else:
+            dpt = numpy.asarray(self.color.get_tuple_depth_map(), dtype='float32').reshape(self.color.map.height, self.color.map.width)
+
+            return True, dpt
+
+
+class FileDevice(CameraDevice):
+    """
+    Fake class to load images from file
+    """
+
+    def __init__(self, filenames, importer, mirror=False):
+        """
+        Initialize device
+        :param mirror: mirror all images
+        :return: None
+        """
+
+        super(FileDevice, self).__init__(mirror)
+
+        if not isinstance(filenames, list):
+            raise ValueError("Files must be list of filenames.")
+
+        self.filenames = filenames
+        self.importer = importer
+        self.depth_intrinsics = importer.getCamera()
+        self.color_intrinsics = numpy.zeros((3, 3))
+        self.extrinsics = numpy.zeros((3, 4))
+        self.mirror = mirror
+
+        self.last_color_num = 0
+        self.last_depth_num = 0
+
+    def start(self):
+        """
+        Start device
+        :return: None
+        """
+        pass
+
+    def stop(self):
+        """
+        Stop device
+        :return: None
+        """
+        pass
+
+    def getDepth(self):
+        """
+        Return a median smoothed depth image
+        :return: depth data as numpy array
+        """
+        time.sleep(0.01)
+        frame = self.importer.loadDepthMap(self.filenames[self.last_depth_num])
+        self.last_depth_num += 1
+        return True, frame
+
+    def getRGB(self):
+        """
+        Return a bit color image
+        :return: color image as numpy array
+        """
+        raise NotImplementedError("!")
+
+    def getGrayScale(self):
+        """
+        Return a grayscale image
+        :return: grayscale image as numpy array
+        """
+        raise NotImplementedError("!")
+
+    def getRGBD(self):
+        """
+        Return a color + depth image
+        :return: RGB-D image as 4-channel numpy array
+        """
+
+        ret_rgb, c = self.getRGB()
+        ret_d, d = self.getDepth()
+
+        return ret_rgb and ret_d, c.astype('float32'), d.astype('float32')
+
+    def getLastColorNum(self):
+        """
+        Get frame number of last color frame
+        :return: frame number
+        """
+        return self.last_color_num
+
+    def getLastDepthNum(self):
+        """
+        Get frame number of last depth frame
+        :return: frame number
+        """
+        return self.last_depth_num
+
+    def getDepthIntrinsics(self):
+        """
+        Get intrinsic matrix of depth camera
+        :return: 3x3 intrinsic camera matrix
+        """
+        return self.depth_intrinsics
+
+    def getColorIntrinsics(self):
+        """
+        Get intrinsic matrix of color camera
+        :return: 3x3 intrinsic camera matrix
+        """
+        return self.color_intrinsics
+
+    def getExtrinsics(self):
+        """
+        Get extrinsic matrix from color to depth camera
+        :return: 4x3 extrinsic camera matrix
+        """
+        return self.extrinsics

@@ -40,7 +40,7 @@ class VtkPointCloud:
     Manage 3D point cloud in VTK
     @see: http://sukhbinder.wordpress.com/2013/09/17/python-vtk-script-to-display-3d-xyz-data/
     """
-    def __init__(self, zMin=-10.0, zMax=10.0, maxNumPoints=1e6):
+    def __init__(self, pts=None, zMin=-10.0, zMax=10.0, maxNumPoints=1e6, color='depth'):
         """
         Initialize class
         :param zMin: minimum depth
@@ -48,6 +48,7 @@ class VtkPointCloud:
         :param maxNumPoints: maximum number of points
         :return: None
         """
+        self.color = color
         self.maxNumPoints = int(maxNumPoints)
         self.vtkPolyData = vtk.vtkPolyData()
         self.clearPoints()
@@ -58,6 +59,11 @@ class VtkPointCloud:
         mapper.SetScalarVisibility(1)
         self.vtkActor = vtk.vtkActor()
         self.vtkActor.SetMapper(mapper)
+        self.vtkActor.GetProperty().SetPointSize(3.0)
+        self.rng = numpy.random.RandomState(23455)
+
+        if pts is not None:
+            self.addPoints(pts)
  
     def addPoint(self, point):
         """
@@ -67,15 +73,31 @@ class VtkPointCloud:
         """
         if self.vtkPoints.GetNumberOfPoints() < self.maxNumPoints:
             pointId = self.vtkPoints.InsertNextPoint(point[:])
-            self.vtkDepth.InsertNextValue(point[2])
+            if self.color == 'depth':
+                self.vtkDepth.InsertNextValue(point[2])
+            else:
+                import numbers
+                assert isinstance(self.color, numbers.Number)
+                self.vtkDepth.InsertNextValue(self.color)
             self.vtkCells.InsertNextCell(1)
             self.vtkCells.InsertCellPoint(pointId)
         else:
-            r = numpy.random.randint(0, self.maxNumPoints)
+            r = self.rng.randint(0, self.maxNumPoints)
             self.vtkPoints.SetPoint(r, point[:])
         self.vtkCells.Modified()
         self.vtkPoints.Modified()
         self.vtkDepth.Modified()
+
+    def addPoints(self, points):
+        """
+        Add points to the point cloud
+        :param points: Nx3 matrix with points
+        :return: None
+        """
+        assert len(points.shape) == 2, points.shape
+        assert points.shape[1] == 3, points.shape
+        for k in xrange(points.shape[0]):
+            self.addPoint(points[k])
  
     def clearPoints(self):
         """
@@ -90,3 +112,37 @@ class VtkPointCloud:
         self.vtkPolyData.SetVerts(self.vtkCells)
         self.vtkPolyData.GetPointData().SetScalars(self.vtkDepth)
         self.vtkPolyData.GetPointData().SetActiveScalars('DepthArray')
+
+    @staticmethod
+    def viewer(pointclouds):
+        assert all([isinstance(p, VtkPointCloud) for p in pointclouds])
+
+        # Renderer
+        renderer = vtk.vtkRenderer()
+        renderer.SetBackground(1.0, 1.0, 1.0)
+
+        for p in pointclouds:
+            renderer.AddActor(p.vtkActor)
+        renderer.ResetCamera()
+
+        # Render Window
+        renderWindow = vtk.vtkRenderWindow()
+        renderWindow.AddRenderer(renderer)
+
+        # Interactor
+        renderWindowInteractor = vtk.vtkRenderWindowInteractor()
+        renderWindowInteractor.SetRenderWindow(renderWindow)
+
+        # Begin Interaction
+        renderWindow.Render()
+        renderWindow.SetWindowName("XYZ Data Viewer")
+
+        renderWindowInteractor.Start()
+
+if __name__ == "__main__":
+    pointCloud = VtkPointCloud()
+    pcl = numpy.random.randn(100, 3)*10.
+    for k in xrange(pcl.shape[0]):
+        pointCloud.addPoint(pcl[k])
+
+    VtkPointCloud.viewer([pointCloud])

@@ -1,5 +1,5 @@
 """
-Predifined datatypes
+This is the file for diverse helper functions.
 
 Copyright 2015 Markus Oberweger, ICG,
 Graz University of Technology <oberweger@icg.tugraz.at>
@@ -20,18 +20,29 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from collections import namedtuple
+import numpy
 
-__author__ = "Paul Wohlhart <wohlhart@icg.tugraz.at>, Markus Oberweger <oberweger@icg.tugraz.at>"
+__author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
-__credits__ = ["Paul Wohlhart", "Markus Oberweger"]
+__credits__ = ["Markus Oberweger"]
 __license__ = "GPL"
 __version__ = "1.0"
 __maintainer__ = "Markus Oberweger"
 __email__ = "oberweger@icg.tugraz.at"
 __status__ = "Development"
 
-DepthFrame = namedtuple('DepthFrame',
-                        ['dpt', 'gtorig', 'gtcrop', 'T', 'gt3Dorig', 'gt3Dcrop', 'com', 'fileName', 'subSeqName',
-                         'side', 'extraData'])
-NamedImgSequence = namedtuple('NamedImgSequence', ['name', 'data', 'config'])
+
+EPS = numpy.cast[numpy.float32](3.*numpy.finfo(numpy.float32).eps)
+PI = numpy.cast[numpy.float32](numpy.pi)
+
+
+def ReLU(x):
+    """
+    Rectified linear unit
+    :param x: input value
+    :return: max(x, 0)
+    """
+    import theano.tensor as T
+
+    return T.maximum(x, 0)  # this version is slightly slower, but has defined gradients, not as theano version
+    # return T.nnet.relu(x, 0)

@@ -149,6 +149,19 @@ static PyObject *getDepthIntrinsics(PyObject *self, PyObject *args)
     return PyArray_SimpleNewFromData(2, dims, NPY_FLOAT32, g_dIntrinsics);
 }
 
+static PyObject *getColorIntrinsics(PyObject *self, PyObject *args)
+{
+    npy_intp dims[2] = {3, 3};
+
+    return PyArray_SimpleNewFromData(2, dims, NPY_FLOAT32, g_cIntrinsics);
+}
+
+static PyObject *getExtrinsics(PyObject *self, PyObject *args)
+{
+    npy_intp dims[2] = {3, 4};
+
+    return PyArray_SimpleNewFromData(2, dims, NPY_FLOAT32, g_Extrinsics);
+}
 
 static PyObject *initDS(PyObject *self, PyObject *args)
 {
@@ -201,6 +214,8 @@ static PyMethodDef DepthSenseMethods[] = {
     {"getLastDepthNum",  last_dframe, METH_VARARGS, "Get last depth frame number"},
     {"getLastDepthTime",  last_dtime, METH_VARARGS, "Get last depth frame time"},
     {"getDepthIntrinsics",  getDepthIntrinsics, METH_VARARGS, "Get intrinsics of depth camera"},
+    {"getColorIntrinsics",  getColorIntrinsics, METH_VARARGS, "Get intrinsics of color camera"},
+    {"getExtrinsics",  getExtrinsics, METH_VARARGS, "Get extrinsics of stereo setup"},
     // CREATE MODULE
     {"start",  initDS, METH_VARARGS, "Init DepthSense"},
     {"stop",  killDS, METH_VARARGS, "Kill DepthSense"},

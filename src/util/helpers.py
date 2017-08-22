@@ -32,114 +32,6 @@ __email__ = "oberweger@icg.tugraz.at"
 __status__ = "Development"
 
 
-def ReLU(x):
-    """
-    Rectified linear unit
-    :param x: input value
-    :return: max(x, 0)
-    """
-    import theano.tensor as T
-    return T.nnet.relu(x, 0)
-
-
-def LeakyReLU(a=0.33):
-    """
-    Leaky rectified linear unit with different scale
-    :param a: scale
-    :return: max(x, a*x)
-    """
-    import theano.tensor as T
-
-    def inner(x):
-        return T.nnet.relu(x, a)
-    return inner
-
-
-def InvReLU(x):
-    """
-    Rectified linear unit
-    :param x: input value
-    :return: max(x,0)
-    """
-    import theano.tensor as T
-    x *= -1.
-    return T.switch(x < 0, 0, x)
-
-
-def TruncLin(x):
-    """
-    Truncated linear unit
-    :param x: input value
-    :return: max(min(x,1),-1)
-    """
-    import theano.tensor as T
-    return T.switch(x < -1, -1, T.switch(x > 1, 1, x))
-
-
-def TruncReLU(x):
-    """
-    Truncated rectified linear unit
-    :param x: input value
-    :return: max(min(x,1),0)
-    """
-    import theano.tensor as T
-    return T.switch(x < 0, 0, T.switch(x > 1, 1, x))
-
-
-def SlopeLin(slope):
-    """
-    Linear unit with different slopes
-    :param slope: slope of negative quadrant
-    :return: x if x > 0 else x/slope
-    """
-    import theano.tensor as T
-
-    def inner(x):
-        return T.switch(T.gt(x, 0), x, T.true_div(x, slope))
-    return inner
-
-
-def SlopeLinInv(slope):
-    """
-    Truncated linear unit
-    :param slope: slope of negative quadrant
-    :return: x if x > 0 else x*slope
-    """
-    import theano.tensor as T
-
-    def inner(x):
-        return T.switch(T.gt(x, 0), x, T.mul(x, slope))
-    return inner
-
-
-def SlopeLin2(x, slope):
-    """
-    Linear unit with different slopes
-    :param slope: slope of negative quadrant
-    :return: x if x > 0 else x/slope
-    """
-
-    import theano.tensor as T
-    return T.switch(T.gt(x, 0), x, T.true_div(x, slope))
-
-
-def huber(delta):
-    """
-    Huber loss, robust at 0
-    :param delta: delta parameter
-    :return: loss value
-    """
-    import theano.tensor as T
-
-    def inner(target, output):
-        d = target - output
-        a = .5 * d**2
-        b = delta * (T.abs_(d) - delta / 2.)
-        l = T.switch(T.abs_(d) <= delta, a, b)
-        return l
-    return inner
-
-
 def cartesian(arrays, out=None):
     """
     Generate a cartesian product of input arrays.
@@ -238,4 +130,24 @@ def gaussian_kernel(kernel_shape, sigma=None):
         for j in xrange(0, kernel_shape):
             kern[i, j] = gauss(i - mid, j - mid, sigma)
 
-    return kern / kern.sum()
+    return kern / numpy.sum(kern)
+
+
+def rgb_to_gray(rgb):
+    """
+    Convert rgb color to gray
+    """
+    assert len(rgb) == 3, "rgb should be 3, got {}".format(len(rgb))
+    g = 0.21 * rgb[0] + 0.72 * rgb[1] + 0.07 * rgb[2]
+    return numpy.asarray([g, g, g])
+
+
+def chunks(l, n):
+    """
+    Yield successive n-sized chunks from l
+    :param l: list
+    :param n: size of chunk
+    :return: iterator
+    """
+    for i in xrange(0, len(l), n):
+        yield l[i:i + n]

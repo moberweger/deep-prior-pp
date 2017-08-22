@@ -23,11 +23,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import numpy
-from data import transformations
-from data.basetypes import NamedImgSequence
-from data.importers import NYUImporter, ICVLImporter
-from util.handdetector import HandDetector
-from util.helpers import shuffle_many_inplace
+from data.importers import NYUImporter, ICVLImporter, MSRA15Importer
 
 
 __author__ = "Paul Wohlhart <wohlhart@icg.tugraz.at>, Markus Oberweger <oberweger@icg.tugraz.at>"
@@ -45,10 +41,12 @@ class Dataset(object):
     Base class for managing data. Used to create training batches.
     """
 
-    def __init__(self, imgSeqs=None):
+    def __init__(self, imgSeqs=None, localCache=True):
         """
         Constructor
+        :param localCache: keeps image stacks locally for faster access, but might require more memory
         """
+        self.localCache = localCache
         if imgSeqs is None:
             self._imgSeqs = []
         else:
@@ -70,11 +68,6 @@ class Dataset(object):
     def imgSeqs(self, value):
         self._imgSeqs = value
         self._imgStacks = {}
-
-    def load(self):
-        objNames = self.lmi.getObjectNames()
-        imgSeqs = self.lmi.loadSequences(objNames)
-        raise NotImplementedError("Not implemented!")
 
     def imgStackDepthOnly(self, seqName, normZeroOne=False):
         imgSeq = None
@@ -107,32 +100,47 @@ class Dataset(object):
                     imgD /= (imgSeq.config['cube'][2] / 2.)
 
                 imgStack[i] = imgD
-                labelStack[i] = numpy.clip(numpy.asarray(imgSeq.data[i].gt3Dcrop, dtype='float32') / (imgSeq.config['cube'][2] / 2.), -1, 1)
+                labelStack[i] = numpy.asarray(imgSeq.data[i].gt3Dcrop, dtype='float32') / (imgSeq.config['cube'][2] / 2.)
 
-            self._imgStacks[seqName] = imgStack
-            self._labelStacks[seqName] = labelStack
+            if self.localCache:
+                self._imgStacks[seqName] = imgStack
+                self._labelStacks[seqName] = labelStack
+            else:
+                return imgStack, labelStack
 
         return self._imgStacks[seqName], self._labelStacks[seqName]
 
 
 class ICVLDataset(Dataset):
-    def __init__(self, imgSeqs=None, basepath=None):
+    def __init__(self, imgSeqs=None, basepath=None, localCache=True):
         """
         constructor
         """
-        super(ICVLDataset, self).__init__(imgSeqs)
+        super(ICVLDataset, self).__init__(imgSeqs, localCache)
         if basepath is None:
             basepath = '../../data/ICVL/'
 
         self.lmi = ICVLImporter(basepath)
 
 
-class NYUDataset(Dataset):
-    def __init__(self, imgSeqs=None, basepath=None):
+class MSRA15Dataset(Dataset):
+    def __init__(self, imgSeqs=None, basepath=None, localCache=True):
         """
         constructor
         """
-        super(NYUDataset, self).__init__(imgSeqs)
+        super(MSRA15Dataset, self).__init__(imgSeqs, localCache)
+        if basepath is None:
+            basepath = '../../data/MSRA15/'
+
+        self.lmi = MSRA15Importer(basepath)
+
+
+class NYUDataset(Dataset):
+    def __init__(self, imgSeqs=None, basepath=None, localCache=True):
+        """
+        constructor
+        """
+        super(NYUDataset, self).__init__(imgSeqs, localCache)
         if basepath is None:
             basepath = '../../data/NYU/'
 

@@ -22,13 +22,14 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import theano.tensor as T
+from net.batchnormlayer import BatchNormLayerParams
 from net.convpoollayer import ConvPoolLayer, ConvPoolLayerParams
 from net.hiddenlayer import HiddenLayer, HiddenLayerParams
 from net.dropoutlayer import DropoutLayer, DropoutLayerParams
 from net.netbase import NetBase, NetBaseParams
+from net.nonlinearitylayer import NonlinearityLayerParams
 from net.poollayer import PoolLayerParams
-from util.helpers import ReLU
+from util.theano_helpers import ReLU
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -59,22 +60,22 @@ class PoseRegNetParams(NetBaseParams):
         if type == 0:
             # Try DeepPose CNN similar configuration
             self.layers.append(ConvPoolLayerParams(inputDim=(batchSize, nChan, hIn, wIn),  # w,h,nChannel
-                                               nFilters=8,
-                                               filterDim=(5, 5),
-                                               poolsize=(4, 4),
-                                               activation=ReLU))
+                                                   nFilters=8,
+                                                   filterDim=(5, 5),
+                                                   poolsize=(4, 4),
+                                                   activation=ReLU))
 
             self.layers.append(ConvPoolLayerParams(inputDim=self.layers[-1].outputDim,
-                                               nFilters=8,
-                                               filterDim=(5, 5),
-                                               poolsize=(2, 2),
-                                               activation=ReLU))
+                                                   nFilters=8,
+                                                   filterDim=(5, 5),
+                                                   poolsize=(2, 2),
+                                                   activation=ReLU))
 
             self.layers.append(ConvPoolLayerParams(inputDim=self.layers[-1].outputDim,
-                                               nFilters=8,
-                                               filterDim=(3, 3),
-                                               poolsize=(1, 1),
-                                               activation=ReLU))
+                                                   nFilters=8,
+                                                   filterDim=(3, 3),
+                                                   poolsize=(1, 1),
+                                                   activation=ReLU))
 
             l3out = self.layers[-1].outputDim
             self.layers.append(HiddenLayerParams(inputDim=(l3out[0], l3out[1] * l3out[2] * l3out[3]),
@@ -93,28 +94,28 @@ class PoseRegNetParams(NetBaseParams):
 
             self.layers.append(HiddenLayerParams(inputDim=self.layers[-1].outputDim,
                                                  outputDim=(batchSize, numJoints * nDims),
-                                                 activation=None))
+                                                 activation=None))  # last one is linear for regression
 
             self.outputDim = self.layers[-1].outputDim
         elif type == 11:
             # Try DeepPose CNN similar configuration
             self.layers.append(ConvPoolLayerParams(inputDim=(batchSize, nChan, hIn, wIn),  # w,h,nChannel
-                                               nFilters=8,
-                                               filterDim=(5, 5),
-                                               poolsize=(4, 4),
-                                               activation=ReLU))
+                                                   nFilters=8,
+                                                   filterDim=(5, 5),
+                                                   poolsize=(4, 4),
+                                                   activation=ReLU))
 
             self.layers.append(ConvPoolLayerParams(inputDim=self.layers[-1].outputDim,
-                                               nFilters=8,
-                                               filterDim=(5, 5),
-                                               poolsize=(2, 2),
-                                               activation=ReLU))
+                                                   nFilters=8,
+                                                   filterDim=(5, 5),
+                                                   poolsize=(2, 2),
+                                                   activation=ReLU))
 
             self.layers.append(ConvPoolLayerParams(inputDim=self.layers[-1].outputDim,
-                                               nFilters=8,
-                                               filterDim=(3, 3),
-                                               poolsize=(1, 1),
-                                               activation=ReLU))
+                                                   nFilters=8,
+                                                   filterDim=(3, 3),
+                                                   poolsize=(1, 1),
+                                                   activation=ReLU))
 
             l3out = self.layers[-1].outputDim
             self.layers.append(HiddenLayerParams(inputDim=(l3out[0], l3out[1] * l3out[2] * l3out[3]),
@@ -150,6 +151,7 @@ class PoseRegNet(NetBase):
 
         :type cfgParams: DescriptorNetParams
         """
+        import theano.tensor as T
 
         if cfgParams is None:
             raise Exception("Cannot create a Net without config parameters (ie. cfgParams==None)")

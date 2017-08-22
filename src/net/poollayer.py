@@ -23,11 +23,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import numpy
-import cPickle
-import theano
-import theano.sandbox.neighbours
-import theano.tensor as T
-from theano.tensor.signal.pool import pool_2d
+from net.layer import Layer
 from net.layerparams import LayerParams
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
@@ -87,7 +83,7 @@ class PoolLayerParams(LayerParams):
             self._poolType = -1
 
 
-class PoolLayer(object):
+class PoolLayer(Layer):
     """
     Pool Layer of a convolutional network
     """
@@ -104,6 +100,12 @@ class PoolLayer(object):
 
         :type cfgParams: PoolLayerParams
         """
+        import theano
+        import theano.sandbox.neighbours
+        import theano.tensor as T
+        from theano.tensor.signal.pool import pool_2d
+
+        super(PoolLayer, self).__init__(rng)
 
         floatX = theano.config.floatX  # @UndefinedVariable
 
@@ -127,12 +129,10 @@ class PoolLayer(object):
         # downsample each feature map individually, using maxpooling
         if poolType == 0:
             # use maxpooling
-            pooled_out = pool_2d(input=self.inputVar, ds=poolsize, ignore_border=True)
+            pooled_out = pool_2d(input=self.inputVar, ds=poolsize, ignore_border=True, mode='max')
         elif poolType == 1:
             # use average pooling
-            pooled_out = theano.sandbox.neighbours.images2neibs(ten4=self.inputVar, neib_shape=poolsize, mode='ignore_borders').mean(axis=-1)
-            new_shape = T.cast(T.join(0, self.inputVar.shape[:-2], T.as_tensor([self.inputVar.shape[2]//poolsize[0]]), T.as_tensor([self.inputVar.shape[3]//poolsize[1]])), 'int64')
-            pooled_out = T.reshape(pooled_out, new_shape, ndim=4)
+            pooled_out = pool_2d(input=self.inputVar, ds=poolsize, ignore_border=True, mode='average_inc_pad')
         elif poolType == 3:
             # use subsampling and ignore border
             pooled_out = self.inputVar[:, :, :(inputDim[2]//poolsize[0])*poolsize[0], :(inputDim[3]//poolsize[1])*poolsize[1]][:, :, ::poolsize[0], ::poolsize[1]]
@@ -140,7 +140,8 @@ class PoolLayer(object):
             # no pooling at all
             pooled_out = self.inputVar
         else:
-            raise ValueError("Unknown pool type!")
+            raise NotImplementedError()
+        self.output_pre_act = pooled_out
 
         self.output = (pooled_out if activation is None
                        else activation(pooled_out))

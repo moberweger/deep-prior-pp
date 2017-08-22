@@ -23,8 +23,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import numpy
-import theano
-import theano.tensor as T
+from net.layer import Layer
 from net.layerparams import LayerParams
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
@@ -40,10 +39,10 @@ __status__ = "Development"
 class DropoutLayerParams(LayerParams):
     def __init__(self, inputDim=None, outputDim=None, p=0.3):
         """
-        :type inputDim: int
+        :type inputDim: tuple of [int]
         :param inputDim: dimensionality of input
 
-        :type outputDim: int
+        :type outputDim: tuple of [int]
         :param outputDim: number of hidden units
 
         :type p: float
@@ -63,7 +62,7 @@ class DropoutLayerParams(LayerParams):
         self._p = value
 
 
-class DropoutLayer(object):
+class DropoutLayer(Layer):
     def __init__(self, rng, inputVar, cfgParams, copyLayer=None, layerNum=None):
         """
         Dropout layer of a MLP: units are fully-connected and connections are
@@ -72,15 +71,22 @@ class DropoutLayer(object):
         :type rng: numpy.random.RandomState
         :param rng: a random number generator used to initialize mask
 
-        :type inputVar: theano.tensor.fmatrix
+        :type inputVar: theano.tensor.matrix
         :param inputVar: a symbolic tensor of shape (n_examples, n_in)
 
         :type cfgParams: DropoutLayerParams
         """
+        import theano
+        import theano.tensor as T
+        from theano.ifelse import ifelse
+
+        super(DropoutLayer, self).__init__(rng)
 
         self.inputVar = inputVar
         self.cfgParams = cfgParams
         self.layerNum = layerNum
+
+        assert 0. < cfgParams.p < 1.
 
         # see https://github.com/uoguelph-mlrg/theano_alexnet/blob/master/alex_net.py
         self.prob_drop = cfgParams.p
@@ -91,34 +97,35 @@ class DropoutLayer(object):
         # faster rng on GPU
         from theano.sandbox.rng_mrg import MRG_RandomStreams
         mask_rng = MRG_RandomStreams(rng.randint(999999))
-        self.mask = mask_rng.binomial(n=1, p=self.prob_keep, size=self.inputVar.shape)
-        self.output = self.flag_on * T.cast(self.mask, theano.config.floatX) * self.inputVar + (1.0 - self.flag_on) * self.prob_keep * self.inputVar
+        self.mask = mask_rng.binomial(n=1, p=self.prob_keep, size=self.cfgParams.inputDim, dtype=theano.config.floatX)
+        self.output = ifelse(T.gt(self.flag_on, 0), self.mask * self.inputVar, self.prob_keep * self.inputVar)
         self.output.name = 'output_layer_{}'.format(self.layerNum)
+        self.output_pre_act = self.output  # for compatibility
 
         # no params and weights
         self.params = []
         self.weights = []
 
-    def enableDropout(self):
+    def unsetDeterministic(self):
         """
         Enable dropout
         :return: None
         """
         self.flag_on.set_value(1.0)
 
-    def disableDropout(self):
+    def setDeterministic(self):
         """
         Disable dropout
         :return: None
         """
         self.flag_on.set_value(0.0)
 
-    def dropoutEnabled(self):
+    def isDeterministic(self):
         """
         Check if dropout is enabled
         :return: True if enabled
         """
-        return self.flag_on.get_value() == 1.0
+        return self.flag_on.get_value() == 0.0
 
     def __str__(self):
         """

@@ -83,6 +83,10 @@ int16_t * normalResult;
 
 // intrinsics
 float g_dIntrinsics[9] = {1.,0.,0., 0.,1.,0., 0.,0.,1.};
+float g_cIntrinsics[9] = {1.,0.,0., 0.,1.,0., 0.,0.,1.};
+
+// extrinsics
+float g_Extrinsics[12] = {1.,0.,0., 0.,1.,0., 0.,0.,1., 0.,0.,0.};
 
 // clean up
 int child_pid = 0;
@@ -186,6 +190,25 @@ static void onNewDepthSample(DepthNode node, DepthNode::NewSampleReceivedData da
     g_dIntrinsics[2] = stereo_param.depthIntrinsics.cx; //the central point along the x axis, expressed in pixel units
     g_dIntrinsics[4] = stereo_param.depthIntrinsics.fy; //the focal length along the y axis, expressed in pixel units
     g_dIntrinsics[5] = stereo_param.depthIntrinsics.cy; //the central point along the y axis, expressed in pixel units
+
+    g_cIntrinsics[0] = stereo_param.colorIntrinsics.fx; //the focal length along the x axis, expressed in pixel units
+    g_cIntrinsics[2] = stereo_param.colorIntrinsics.cx; //the central point along the x axis, expressed in pixel units
+    g_cIntrinsics[4] = stereo_param.colorIntrinsics.fy; //the focal length along the y axis, expressed in pixel units
+    g_cIntrinsics[5] = stereo_param.colorIntrinsics.cy; //the central point along the y axis, expressed in pixel units
+
+    // extrinsic parameters
+    g_Extrinsics[0] = stereo_param.extrinsics.r11; // the r11 parameter
+    g_Extrinsics[1] = stereo_param.extrinsics.r12; // the r12 parameter
+    g_Extrinsics[2] = stereo_param.extrinsics.r13; // the r13 parameter
+    g_Extrinsics[3] = stereo_param.extrinsics.r21; // the r21 parameter
+    g_Extrinsics[4] = stereo_param.extrinsics.r22; // the r22 parameter
+    g_Extrinsics[5] = stereo_param.extrinsics.r32; // the r32 parameter
+    g_Extrinsics[6] = stereo_param.extrinsics.r31; // the r31 parameter
+    g_Extrinsics[7] = stereo_param.extrinsics.r32; // the r32 parameter
+    g_Extrinsics[8] = stereo_param.extrinsics.r33; // the r33 parameter
+    g_Extrinsics[9] = stereo_param.extrinsics.t1; // the t1 parameter
+    g_Extrinsics[10] = stereo_param.extrinsics.t2; // the t2 parameter
+    g_Extrinsics[11] = stereo_param.extrinsics.t3; // the t3 parameter
 }
 
 /*----------------------------------------------------------------------------*/

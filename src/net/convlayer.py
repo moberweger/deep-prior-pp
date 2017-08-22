@@ -23,12 +23,8 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import numpy
-import theano
-import theano.sandbox.neighbours
-import theano.tensor as T
-from theano.tensor.nnet import conv2d
+from net.layer import Layer
 from net.layerparams import LayerParams
-from util.helpers import ReLU
 
 __author__ = "Paul Wohlhart <wohlhart@icg.tugraz.at>, Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -42,8 +38,9 @@ __status__ = "Development"
 
 class ConvLayerParams(LayerParams):
 
-    def __init__(self, inputDim=None, nFilters=None, filterDim=None, activation=T.tanh,
-                 filter_shape=None, image_shape=None, outputDim=None, stride=(1, 1), border_mode='valid'):
+    def __init__(self, inputDim=None, nFilters=None, filterDim=None, activation=None, hasBias=True,
+                 filter_shape=None, image_shape=None, outputDim=None, stride=(1, 1), border_mode='valid',
+                 init_method=None):
         """
         :type filter_shape: tuple or list of length 4
         :param filter_shape: (number of filters, num inputVar feature maps, filter height,filter width)
@@ -62,8 +59,10 @@ class ConvLayerParams(LayerParams):
         self._filter_shape = filter_shape
         self._image_shape = image_shape
         self._activation = activation
+        self._hasbias = hasBias
         self._stride = stride
         self._border_mode = border_mode
+        self._init_method = init_method
         self.update()
 
     @property
@@ -114,14 +113,26 @@ class ConvLayerParams(LayerParams):
     def activation(self):
         return self._activation
 
+    @activation.setter
+    def activation(self, value):
+        self._activation = value
+
+    @property
+    def hasBias(self):
+        return self._hasbias
+
+    @hasBias.setter
+    def hasBias(self, value):
+        self._hasbias = value
+
     def update(self):
         """
         calc image_shape,
         """
         self._filter_shape = (self._nFilters,
                               self._inputDim[1],
-                              self._filterDim[1],
-                              self._filterDim[0])
+                              self._filterDim[0],
+                              self._filterDim[1])
         self._image_shape = self._inputDim
 
         if self._border_mode == 'valid':
@@ -155,22 +166,8 @@ class ConvLayerParams(LayerParams):
         """
         return (numpy.prod(self.filter_shape) + self.filter_shape[0]) * 4  # sizeof(theano.config.floatX)
 
-    def getOutputRange(self):
-        """
-        Get output range of layer
-        :return: output range as tuple
-        """
-        if self._activation == T.tanh:
-            return [-1, 1]
-        elif self._activation == T.nnet.sigmoid:
-            return [0, 1]
-        elif self._activation == ReLU:
-            return [0, numpy.inf]
-        else:
-            return [-numpy.inf, numpy.inf]
 
-
-class ConvLayer(object):
+class ConvLayer(Layer):
     """
     Pool Layer of a convolutional network
 
@@ -189,6 +186,11 @@ class ConvLayer(object):
 
         :type cfgParams: ConvPoolLayerParams
         """
+        import theano
+        import theano.tensor as T
+        from theano.tensor.nnet import conv2d
+
+        super(ConvLayer, self).__init__(rng)
 
         assert isinstance(cfgParams, ConvLayerParams)
 
@@ -217,37 +219,16 @@ class ConvLayer(object):
         if not (copyLayer is None):
             self.W = copyLayer.W
         else:
-            # initialize weights with random weights
-            if activation == ReLU:
-                W_bound = numpy.sqrt(2. / numpy.prod(filter_shape[1:]))
-                wInitVals = numpy.asarray(rng.normal(loc=0.0, scale=W_bound, size=filter_shape), dtype=floatX)
-            elif activation == theano.tensor.nnet.sigmoid:
-                W_bound = 4. * numpy.sqrt(6. / (fan_in + fan_out))
-                wInitVals = numpy.asarray(rng.uniform(low=-W_bound, high=W_bound, size=filter_shape), dtype=floatX)
-            else:
-                W_bound = 1. / (fan_in + fan_out)
-                wInitVals = numpy.asarray(rng.uniform(low=-W_bound, high=W_bound, size=filter_shape), dtype=floatX)
-
-            # try pca to create an orthogonal set of filters to start with
-            w_init_orthogonal = False # True ?
-            if w_init_orthogonal:
-                wInitVals = numpy.reshape(wInitVals, (filter_shape[0], numpy.prod(filter_shape[1:])))
-                svd = numpy.linalg.svd(wInitVals.T)
-                U = svd[0]
-                wInitVals = U.T[0:filter_shape[0]].T
-                wInitVals = numpy.reshape(wInitVals.swapaxes(0, 1), filter_shape)
-
+            wInitVals = self.getInitVals(filter_shape, 'conv', act_fn=cfgParams.activation_str, orthogonal=False, method=cfgParams._init_method)
             self.W = theano.shared(wInitVals, borrow=True, name='convW{}'.format(layerNum))
 
         # the bias is a 1D tensor -- one bias per output feature map
-        if not (copyLayer is None):
-            self.b = copyLayer.b
-        else:
-            if activation == ReLU:
-                b_values = numpy.zeros((filter_shape[0],), dtype=floatX)  # TODO ones
+        if self.cfgParams.hasBias is True:
+            if not (copyLayer is None):
+                self.b = copyLayer.b
             else:
                 b_values = numpy.zeros((filter_shape[0],), dtype=floatX)
-            self.b = theano.shared(value=b_values, borrow=True, name='convB{}'.format(layerNum))
+                self.b = theano.shared(value=b_values, borrow=True, name='convB{}'.format(layerNum))
 
         if border_mode == 'same':
             # convolve inputVar feature maps with filters
@@ -273,14 +254,18 @@ class ConvLayer(object):
 
         # add the bias term. Since the bias is a vector (1D array), we first reshape it to a tensor of shape
         # (1,n_filters,1,1). Each bias will thus be broadcasted across mini-batches and feature map width & height
-        lin_output = conv_out + self.b.dimshuffle('x', 0, 'x', 'x')
+        if self.cfgParams.hasBias is True:
+            lin_output = conv_out + self.b.dimshuffle('x', 0, 'x', 'x')
+        else:
+            lin_output = conv_out
+        self.output_pre_act = lin_output
         self.output = (lin_output if activation is None
                        else activation(lin_output))
 
         self.output.name = 'output_layer_{}'.format(self.layerNum)
 
         # store parameters of this layer
-        self.params = [self.W, self.b]
+        self.params = [self.W, self.b] if self.cfgParams.hasBias else [self.W]
         self.weights = [self.W]
 
     def __str__(self):
@@ -288,6 +273,12 @@ class ConvLayer(object):
         Print configuration of layer
         :return: configuration string
         """
-        return "inputDim {}, outputDim {}, filterDim {}, nFilters {}, activation {}, stride {}, border_mode {}".format(self.cfgParams.inputDim, self.cfgParams.outputDim, self.cfgParams.filterDim,
-                                                                  self.cfgParams.nFilters, self.cfgParams.activation_str,
-                                                                  self.cfgParams.stride, self.cfgParams.border_mode)
+        return "inputDim {}, outputDim {}, filterDim {}, nFilters {}, activation {}, stride {}, border_mode {}, " \
+               "hasBias {}".format(self.cfgParams.inputDim,
+                                   self.cfgParams.outputDim,
+                                   self.cfgParams.filterDim,
+                                   self.cfgParams.nFilters,
+                                   self.cfgParams.activation_str,
+                                   self.cfgParams.stride,
+                                   self.cfgParams.border_mode,
+                                   self.cfgParams.hasBias)
