@@ -33,7 +33,7 @@ M. Oberweger and V. Lepetit. DeepPrior++: Improving Fast and Accurate 3D Hand Po
   * Camera interface for the Creative Senz3D is included in ./src/util. Build them with `cmake . && make`.
 
 ## Pretrained models:
-[Download](https://webadmin.tugraz.at/fileadmin/user_upload/Institute/ICG/Downloads/team_lepetit/3d_hand_pose/DeepPriorPP_pretrained.zip) pretrained models for ICVL and NYU dataset.
+[Download](https://files.icg.tugraz.at/f/04cad84751/?dl=1) pretrained models for ICVL and NYU dataset.
 
 ## Datasets:
 The ICVL and MSRA dataset is trained for a time-of-flight camera, and the NYU dataset for a structured light camera. The annotations are different. See the papers for it.
