@@ -339,7 +339,7 @@ class NetTrainer(object):
         self.val_data_x.set_value(val_data, borrow=True)
         self.val_data_y.set_value(val_y, borrow=True)
 
-    def alignData(self, data, out=None, fillData=None):
+    def alignData(self, data, alignSize=None, out=None, fillData=None):
         """
         Align data to a multiple of the macro batch size, pad last incomplete minibatch with random samples
         :param data: data for alignment
@@ -347,17 +347,24 @@ class NetTrainer(object):
         :param fillData: data used for padding last minibatches
         :return: padded data
         """
+
+        if alignSize is None:
+            alignSize = self.getNumSamplesPerMacroBatch()
+
+        if alignSize < data.shape[0]:
+            print "WARNING: aligned size < data size ({}<{})".format(alignSize, data.shape[0])
+
         # pad with zeros to macro batch size, but only along dimension 0 ie samples
-        if data.shape[0] == self.getNumSamplesPerMacroBatch():
+        if data.shape[0] == alignSize:
             topad = 0
         else:
-            topad = self.getNumSamplesPerMacroBatch() - data.shape[0] % self.getNumSamplesPerMacroBatch()
+            topad = alignSize - data.shape[0] % alignSize
         sz = [(0, topad)]
         for i in range(len(data.shape) - 1):
             sz.append((0, 0))
         if out is not None:
             raise NotImplementedError()
-            assert out.shape[0] == self.getNumSamplesPerMacroBatch()
+            assert out.shape[0] == alignSize
             assert all(out.shape[1:] == data.shape[1:])
             padded = out
             padded[0:data.shape[0]] = data
@@ -368,15 +375,15 @@ class NetTrainer(object):
             fillData = padded
 
         # fill full macrobatch with random data, just to be sure...
-        if (data.shape[0] % self.getNumSamplesPerMacroBatch()) != 0:
+        if (data.shape[0] % alignSize) != 0:
             # fill last incomplete minibatch with random samples or by repeating last one
             if self.cfgParams.pad_random:
                 # start from same random seed every time the data is padded, otherwise labels and data mix up
                 rng = numpy.random.RandomState(data.shape[0])
-                for i in xrange(0, self.getNumSamplesPerMacroBatch() - (data.shape[0] % self.getNumSamplesPerMacroBatch())):
+                for i in xrange(0, alignSize - (data.shape[0] % alignSize)):
                     padded[data.shape[0]+i] = fillData[rng.randint(0, fillData.shape[0])]
             else:
-                for i in xrange(0, self.getNumSamplesPerMacroBatch() - (data.shape[0] % self.getNumSamplesPerMacroBatch())):
+                for i in xrange(0, alignSize - (data.shape[0] % alignSize)):
                     padded[data.shape[0]+i] = padded[data.shape[0]-1]
 
         if out is None:
@@ -684,11 +691,14 @@ class NetTrainer(object):
         else:
             pass
 
-    def chunksForMP(self, mbi):
+    def chunksForMP(self, mbi, use_all_last=True):
         if self.isLastMacroBatch(mbi):
             start_idx = 0
-            num_mb = int(numpy.ceil(self.numTrainSamplesMB / float(self.cfgParams.batch_size)))
-            end_idx = self.cfgParams.batch_size * (num_mb - self.getNumMiniBatchesPerMacroBatch() * (self.getNumMacroBatches() - 1))
+            if use_all_last is True:
+                end_idx = self.getNumSamplesPerMacroBatch()
+            else:
+                num_mb = int(numpy.ceil(self.numTrainSamplesMB / float(self.cfgParams.batch_size)))
+                end_idx = self.cfgParams.batch_size * (num_mb - self.getNumMiniBatchesPerMacroBatch() * (self.getNumMacroBatches() - 1))
             last = True
         else:
             start_idx = mbi * self.getNumSamplesPerMacroBatch()
@@ -696,12 +706,8 @@ class NetTrainer(object):
             last = False
 
         num_chunks = int(numpy.ceil((end_idx - start_idx) / float(self.cfgParams.para_num_proc)))
-        if self.cfgParams.para_load is True:
-            idxs = list(chunks(range(start_idx, end_idx), num_chunks))
-            tidxs = list(chunks(range(0, (end_idx - start_idx)), num_chunks))
-        else:
-            idxs = list(chunks(range(start_idx, end_idx), num_chunks))
-            tidxs = list(chunks(range(0, (end_idx - start_idx)), num_chunks))
+        idxs = list(chunks(range(start_idx, end_idx), num_chunks))
+        tidxs = list(chunks(range(0, (end_idx - start_idx)), num_chunks))
         return last, tidxs, idxs
 
     def unsetDataLoading(self):
@@ -881,8 +887,8 @@ class NetTrainer(object):
             if numpy.any(numpy.isnan(param_i.get_value())):
                 print("NaN in weights", param_i.name)
 
-    def augmentCrop(self, img, gt3Dcrop, com, cube, M, aug_modes, hd, normZeroOne=False, sigma_com=5.,
-                    sigma_sc=0.02):
+    def augmentCrop(self, img, gt3Dcrop, com, cube, M, aug_modes, hd, normZeroOne=False, sigma_com=None,
+                    sigma_sc=None):
         """
         Commonly used function to augment hand poses
         :param img: image
@@ -897,6 +903,12 @@ class NetTrainer(object):
 
         assert len(img.shape) == 2
         assert isinstance(aug_modes, list)
+
+        if sigma_com is None:
+            sigma_com = 5.
+
+        if sigma_sc is None:
+            sigma_sc = 0.02
 
         if normZeroOne is True:
             img = img * cube[2] + (com[2] - (cube[2] / 2.))

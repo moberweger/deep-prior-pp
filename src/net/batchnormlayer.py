@@ -197,7 +197,7 @@ class BatchNormLayer(Layer):
         Check if batch normalization is enabled
         :return: True if enabled
         """
-        return self.flag_on.get_value() == 0.0
+        return bool(numpy.allclose(self.flag_on.get_value(), 0.0))
 
     def __str__(self):
         """

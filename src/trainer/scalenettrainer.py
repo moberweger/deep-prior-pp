@@ -225,7 +225,10 @@ class ScaleNetTrainer(NetTrainer):
 
             imgD, gt3D, cube, com2D, M = self.augmentCrop(
                 img, gt3D*(cube[2] / 2.), macro_params['args']['di'].joint3DToImg(com), cube, numpy.eye(3),
-                macro_params['args']['aug_modes'], macro_params['args']['hd'], macro_params['args']['normZeroOne'])
+                macro_params['args']['aug_modes'], macro_params['args']['hd'], macro_params['args']['normZeroOne'],
+                sigma_com=(macro_params['args']['sigma_com'] if 'sigma_com' in macro_params['args'] else None),
+                sigma_sc=(macro_params['args']['sigma_sc'] if 'sigma_sc' in macro_params['args'] else None))
+            com = macro_params['args']['di'].jointImgTo3D(com2D)
 
             new_data['train_data_x'][idx] = imgD
             new_data['train_data_y'][idx] = gt3D.flatten()

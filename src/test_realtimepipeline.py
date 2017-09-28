@@ -70,7 +70,7 @@ if __name__ == '__main__':
     # di.fy = 230.5
     # di.ux = 160.
     # di.uy = 120.
-    rtp = RealtimeHandposePipeline(poseNetParams, config, di,  verbose=False, comrefNet=comrefNetParams)
+    rtp = RealtimeHandposePipeline(poseNetParams, config, di, verbose=False, comrefNet=comrefNetParams)
 
     # use filenames
     filenames = []

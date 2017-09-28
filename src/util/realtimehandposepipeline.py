@@ -24,6 +24,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 
 from collections import deque
 from multiprocessing import Process, Manager, Value
+from ctypes import c_bool
 import cv2
 import time
 import numpy
@@ -78,29 +79,30 @@ class RealtimeHandposePipeline(object):
         self.poseNet = poseNet
         self.comrefNet = comrefNet
         # configuration
-        self.config = config
         self.initialconfig = copy.deepcopy(config)
-        # synchronization between threads
-        self.queue = Manager().dict(fid=0, crop=numpy.ones((128, 128), dtype='float32'),
-                                    com3D=numpy.asarray([0, 0, 300]),
-                                    frame=numpy.ones((240, 320), dtype='float32'), M=numpy.eye(3))
-        self.start = Value('b', False)
-        self.stop = Value('b', False)
+        # synchronization between processes
+        self.sync = Manager().dict(config=config, fid=0,
+                                   crop=numpy.ones((128, 128), dtype='float32'),
+                                   com3D=numpy.asarray([0, 0, 300]),
+                                   frame=numpy.ones((240, 320), dtype='float32'), M=numpy.eye(3))
+        self.start_prod = Value(c_bool, False)
+        self.start_con = Value(c_bool, False)
+        self.stop = Value(c_bool, False)
         # for calculating FPS
         self.lastshow = time.time()
         self.runningavg_fps = deque(100*[0], 100)
         self.verbose = verbose
         # hand left/right
-        self.hand = self.HAND_LEFT
+        self.hand = Value('i', self.HAND_LEFT)
         # initial state
-        self.state = self.STATE_IDLE
+        self.state = Value('i', self.STATE_IDLE)
         # detector
-        self.detection = self.DETECTOR_COM
+        self.detection = Value('i', self.DETECTOR_COM)
         # hand size estimation
         self.handsizes = []
         self.numinitframes = 50
         # hand tracking or detection
-        self.tracking = False
+        self.tracking = Value(c_bool, False)
         self.lastcom = (0, 0, 0)
         # show different results
         self.show_pose = False
@@ -137,11 +139,12 @@ class RealtimeHandposePipeline(object):
         device.start()
 
         self.initNets()
+        # Nets are compiled, ready to run
+        self.start_prod.value = True
 
         fid = 0
         while True:
-            # We only start when consumer is ready
-            if self.start.value is False:
+            if self.start_con.value is False:
                 time.sleep(0.1)
                 continue
 
@@ -162,7 +165,7 @@ class RealtimeHandposePipeline(object):
             if self.verbose is True:
                 print("{}ms detection".format((time.time() - startd)*1000.))
 
-            self.queue.update(fid=fid, crop=crop, com3D=com3D, frame=frame, M=M)
+            self.sync.update(fid=fid, crop=crop, com3D=com3D, frame=frame, M=M)
             fid += 1
 
         # we are done
@@ -178,17 +181,21 @@ class RealtimeHandposePipeline(object):
 
         self.initNets()
         # Nets are compiled, ready to run
-        self.start.value = True
+        self.start_con.value = True
         
         while True:
+            if self.start_prod.value is False:
+                time.sleep(0.1)
+                continue
+
             if self.stop.value is True:
                 break
 
-            frm = copy.deepcopy(self.queue)
+            frm = copy.deepcopy(self.sync)
 
             startp = time.time()
             pose = self.estimatePose(frm['crop'], frm['com3D'])
-            pose = pose * self.config['cube'][2]/2. + frm['com3D']
+            pose = pose * self.sync['config']['cube'][2]/2. + frm['com3D']
             if self.verbose is True:
                 print("{}ms pose".format((time.time() - startp)*1000.))
 
@@ -208,7 +215,6 @@ class RealtimeHandposePipeline(object):
 
         cv2.destroyAllWindows()
         # we are done
-        self.start.value = False
         print "Exiting consumer..."
         return True
 
@@ -263,7 +269,7 @@ class RealtimeHandposePipeline(object):
 
             startp = time.time()
             pose = self.estimatePose(crop, com3D)
-            pose = pose*self.config['cube'][2]/2. + com3D
+            pose = pose*self.sync['config']['cube'][2]/2. + com3D
             if self.verbose is True:
                 print("{}ms pose".format((time.time() - startp)*1000.))
 
@@ -294,34 +300,36 @@ class RealtimeHandposePipeline(object):
         :return: cropped image, transformation, center
         """
 
-        hd = HandDetector(frame, self.config['fx'], self.config['fy'], importer=self.importer, refineNet=self.comrefNet)
-        doHS = (self.state == self.STATE_INIT)
-        if self.tracking and not numpy.allclose(self.lastcom, 0):
-            loc, handsz = hd.track(self.lastcom, self.config['cube'], doHandSize=doHS)
+        hd = HandDetector(frame, self.sync['config']['fx'], self.sync['config']['fy'], importer=self.importer, refineNet=self.comrefNet)
+        doHS = (self.state.value == self.STATE_INIT)
+        if self.tracking.value and not numpy.allclose(self.lastcom, 0):
+            loc, handsz = hd.track(self.lastcom, self.sync['config']['cube'], doHandSize=doHS)
         else:
-            loc, handsz = hd.detect(size=self.config['cube'], doHandSize=doHS)
+            loc, handsz = hd.detect(size=self.sync['config']['cube'], doHandSize=doHS)
 
         self.lastcom = loc
 
-        if self.state == self.STATE_INIT:
+        if self.state.value == self.STATE_INIT:
             self.handsizes.append(handsz)
             if self.verbose is True:
                 print numpy.median(numpy.asarray(self.handsizes), axis=0)
         else:
             self.handsizes = []
 
-        if self.state == self.STATE_INIT and len(self.handsizes) >= self.numinitframes:
-            self.config['cube'] = tuple(numpy.median(numpy.asarray(self.handsizes), axis=0).astype('int'))
-            self.state = self.STATE_RUN
+        if self.state.value == self.STATE_INIT and len(self.handsizes) >= self.numinitframes:
+            cfg = self.sync['config']
+            cfg['cube'] = tuple(numpy.median(numpy.asarray(self.handsizes), axis=0).astype('int'))
+            self.sync.update(config=cfg)
+            self.state.value = self.STATE_RUN
             self.handsizes = []
 
         if numpy.allclose(loc, 0):
             return numpy.zeros((self.poseNet.cfgParams.inputDim[2], self.poseNet.cfgParams.inputDim[3]), dtype='float32'), numpy.eye(3), loc
         else:
-            crop, M, com = hd.cropArea3D(com=loc, size=self.config['cube'],
+            crop, M, com = hd.cropArea3D(com=loc, size=self.sync['config']['cube'],
                                          dsize=(self.poseNet.layers[0].cfgParams.inputDim[2], self.poseNet.layers[0].cfgParams.inputDim[3]))
             com3D = self.importer.jointImgTo3D(com)
-            sc = (self.config['cube'][2] / 2.)
+            sc = (self.sync['config']['cube'][2] / 2.)
             crop[crop == 0] = com3D[2] + sc
             crop.clip(com3D[2] - sc, com3D[2] + sc)
             crop -= com3D[2]
@@ -337,7 +345,7 @@ class RealtimeHandposePipeline(object):
         """
 
         # mirror hand if left/right changed
-        if self.hand == self.HAND_LEFT:
+        if self.hand.value == self.HAND_LEFT:
             inp = crop[None, None, :, :].astype('float32')
         else:
             inp = crop[None, None, :, ::-1].astype('float32')
@@ -345,18 +353,18 @@ class RealtimeHandposePipeline(object):
         jts = self.poseNet.computeOutput(inp)
         jj = jts[0].reshape((-1, 3))
 
-        if 'invX' in self.config:
-            if self.config['invX'] is True:
+        if 'invX' in self.sync['config']:
+            if self.sync['config']['invX'] is True:
                 # mirror coordinates
                 jj[:, 1] *= (-1.)
 
-        if 'invY' in self.config:
-            if self.config['invY'] is True:
+        if 'invY' in self.sync['config']:
+            if self.sync['config']['invY'] is True:
                 # mirror coordinates
                 jj[:, 0] *= (-1.)
 
         # mirror pose if left/right changed
-        if self.hand == self.HAND_RIGHT:
+        if self.hand.value == self.HAND_RIGHT:
             # mirror coordinates
             jj[:, 0] *= (-1.)
         return jj
@@ -369,8 +377,8 @@ class RealtimeHandposePipeline(object):
         :return: image
         """
         upsample = 1.
-        if 'upsample' in self.config:
-            upsample = self.config['upsample']
+        if 'upsample' in self.sync['config']:
+            upsample = self.sync['config']['upsample']
 
         # plot depth image with annotations
         imgcopy = frame.copy()
@@ -408,11 +416,15 @@ class RealtimeHandposePipeline(object):
                      (jtI[hpe.jointConnections[i][1], 0], jtI[hpe.jointConnections[i][1], 1]),
                      255.*hpe.jointConnectionColors[i], 2)
 
-        # rotate 3D pose and project to 2D
-        jtP = rotatePoints3D(handpose, handpose[self.importer.crop_joint_idx], 0., 90., 0.)
+        comI = self.importer.joint3DToImg(com3D)
+        comI[0:2] -= numpy.asarray([frame.shape[0]//2, frame.shape[1]//2])
+        comI[0:2] *= upsample
+        comI[0:2] += numpy.asarray([imgcopy.shape[0]//2, imgcopy.shape[1]//2])
+        cv2.circle(imgcopy, (comI[0], comI[1]), 3, (0, 255, 0), 1)
 
         poseimg = numpy.zeros_like(imgcopy)
-        jtP = self.importer.joints3DToImg(jtP)
+        # rotate 3D pose and project to 2D
+        jtP = self.importer.joints3DToImg(rotatePoints3D(handpose, handpose[self.importer.crop_joint_idx], 0., 90., 0.))
         jtP[:, 0:2] -= numpy.asarray([frame.shape[0]//2, frame.shape[1]//2])
         jtP[:, 0:2] *= upsample
         jtP[:, 0:2] += numpy.asarray([imgcopy.shape[0]//2, imgcopy.shape[1]//2])
@@ -423,6 +435,12 @@ class RealtimeHandposePipeline(object):
             cv2.line(poseimg, (jtP[hpe.jointConnections[i][0], 0], jtP[hpe.jointConnections[i][0], 1]),
                      (jtP[hpe.jointConnections[i][1], 0], jtP[hpe.jointConnections[i][1], 1]),
                      255.*hpe.jointConnectionColors[i], 2)
+
+        comP = self.importer.joint3DToImg(rotatePoint3D(com3D, handpose[self.importer.crop_joint_idx], 0., 90., 0.))
+        comP[0:2] -= numpy.asarray([frame.shape[0]//2, frame.shape[1]//2])
+        comP[0:2] *= upsample
+        comP[0:2] += numpy.asarray([imgcopy.shape[0]//2, imgcopy.shape[1]//2])
+        cv2.circle(poseimg, (comP[0], comP[1]), 3, (0, 255, 0), 1)
 
         return imgcopy, poseimg
 
@@ -444,27 +462,28 @@ class RealtimeHandposePipeline(object):
         cv2.putText(retimg, "FPS {0:2.1f}".format(avg_fps), (20, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand text
-        cv2.putText(retimg, "Left" if self.hand == self.HAND_LEFT else "Right", (80, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+        cv2.putText(retimg, "Left" if self.hand.value == self.HAND_LEFT else "Right", (80, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand size
-        cv2.putText(retimg, "HC-{0:d}".format(self.config['cube'][0]), (120, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+        ss = "HC-{0:d}".format(self.sync['config']['cube'][0])
+        cv2.putText(retimg, ss, (120, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand tracking mode, tracking or detection
-        cv2.putText(retimg, "T" if self.tracking else "D", (260, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
+        cv2.putText(retimg, "T" if self.tracking.value else "D", (260, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # hand detection mode, COM or CNN
-        if self.detection == self.DETECTOR_COM:
+        if self.detection.value == self.DETECTOR_COM:
             mode = "COM"
         else:
             mode = "???"
         cv2.putText(retimg, mode, (280, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0))
 
         # status symbol
-        if self.state == self.STATE_IDLE:
+        if self.state.value == self.STATE_IDLE:
             col = (0, 0, 255)
-        elif self.state == self.STATE_INIT:
+        elif self.state.value == self.STATE_INIT:
             col = (0, 255, 255)
-        elif self.state == self.STATE_RUN:
+        elif self.state.value == self.STATE_RUN:
             col = (0, 255, 0)
         else:
             col = (0, 0, 255)
@@ -481,20 +500,24 @@ class RealtimeHandposePipeline(object):
         if key == ord('q'):
             self.stop.value = True
         elif key == ord('h'):
-            if self.hand == self.HAND_LEFT:
-                self.hand = self.HAND_RIGHT
+            if self.hand.value == self.HAND_LEFT:
+                self.hand.value = self.HAND_RIGHT
             else:
-                self.hand = self.HAND_LEFT
+                self.hand.value = self.HAND_LEFT
         elif key == ord('+'):
-            self.config['hand_cube'] = tuple([lst + 10 for lst in list(self.config['hand_cube'])])
+            cfg = self.sync['config']
+            cfg['cube'] = tuple([lst + 10 for lst in list(cfg['cube'])])
+            self.sync.update(config=cfg)
         elif key == ord('-'):
-            self.config['hand_cube'] = tuple([lst - 10 for lst in list(self.config['hand_cube'])])
+            cfg = self.sync['config']
+            cfg['cube'] = tuple([lst - 10 for lst in list(cfg['cube'])])
+            self.sync.update(config=cfg)
         elif key == ord('r'):
             self.reset()
         elif key == ord('i'):
-            self.state = self.STATE_INIT
+            self.state.value = self.STATE_INIT
         elif key == ord('t'):
-            self.tracking = not self.tracking
+            self.tracking.value = not self.tracking.value
         elif key == ord('s'):
             self.show_crop = not self.show_crop
             self.show_pose = not self.show_pose
@@ -506,6 +529,6 @@ class RealtimeHandposePipeline(object):
         Reset stateful parts
         :return: None
         """
-        self.state = self.STATE_IDLE
-        self.config = copy.deepcopy(self.initialconfig)
-        self.detection = self.DETECTOR_COM
+        self.state.value = self.STATE_IDLE
+        self.sync.update(config=copy.deepcopy(self.initialconfig))
+        self.detection.value = self.DETECTOR_COM

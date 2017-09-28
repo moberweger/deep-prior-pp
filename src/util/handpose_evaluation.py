@@ -23,6 +23,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import numpy
+import scipy
 import cv2
 from data.importers import DepthImporter, NYUImporter, ICVLImporter, MSRA15Importer
 from util.helpers import rgb_to_gray
@@ -116,8 +117,7 @@ class HandposeEvaluation(object):
         :return: median error
         """
 
-        errs = numpy.sqrt(numpy.square(self.gtjoints - self.joints).sum(axis=2))
-        return numpy.median(errs[numpy.isfinite(errs)])
+        return scipy.stats.nanmedian(numpy.sqrt(numpy.square(self.gtjoints - self.joints).sum(axis=2)))
 
     def getMaxError(self):
         """

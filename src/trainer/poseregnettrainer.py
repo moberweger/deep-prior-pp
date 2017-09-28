@@ -241,7 +241,9 @@ class PoseRegNetTrainer(NetTrainer):
 
             imgD, curLabel, _, _, _ = self.augmentCrop(
                 img, gt3Dcrop, com, cube, numpy.eye(3), macro_params['args']['aug_modes'],
-                macro_params['args']['hd'], macro_params['args']['normZeroOne'])
+                macro_params['args']['hd'], macro_params['args']['normZeroOne'],
+                sigma_com=(macro_params['args']['sigma_com'] if 'sigma_com' in macro_params['args'] else None),
+                sigma_sc=(macro_params['args']['sigma_sc'] if 'sigma_sc' in macro_params['args'] else None))
 
             # import scipy
             # scipy.misc.imshow(numpy.concatenate([train_data_xDB[i+start_idx, 0], imgD], axis=0))
