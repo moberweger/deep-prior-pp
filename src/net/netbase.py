@@ -121,6 +121,8 @@ class NetBase(object):
 
         # assemble externally visible parameters
         self.output = self.layers[-1].output
+        
+        self.load(self.cfgParams.loadFile)
 
     def __str__(self):
         """
