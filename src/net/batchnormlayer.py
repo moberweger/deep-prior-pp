@@ -177,6 +177,7 @@ class BatchNormLayer(Layer):
         # self.output = (inputVar - mean) * (gamma * inv_std) + beta
         # where either inv_std == 1 or std == 1, depending on which one is used
         self.output = T.nnet.batch_normalization(inputVar, gamma=gamma*inv_std, beta=beta, mean=mean, std=1, mode=mode)
+        self.output_pre_act = self.output
 
     def unsetDeterministic(self):
         """

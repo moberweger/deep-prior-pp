@@ -46,7 +46,7 @@ if __name__ == '__main__':
     rng = numpy.random.RandomState(23455)
 
     # di = MSRA15Importer('../data/MSRA15/')
-    # Seq2 = di.loadSequence('test_seq_1')
+    # Seq2 = di.loadSequence('P0')
     # testSeqs = [Seq2]
 
     # di = ICVLImporter('../data/ICVL/')
@@ -58,18 +58,13 @@ if __name__ == '__main__':
     testSeqs = [Seq2]
 
     # load trained network
-    poseNetParams = PoseRegNetParams(type=11, nChan=1, wIn=128, hIn=128, batchSize=1, numJoints=14, nDims=3)
+    poseNetParams = ResNetParams(type=1, nChan=1, wIn=128, hIn=128, batchSize=1, numJoints=14, nDims=3)
     poseNetParams.loadFile = "./eval/NYU_network_prior.pkl"
     comrefNetParams = ScaleNetParams(type=1, nChan=1, wIn=128, hIn=128, batchSize=1, resizeFactor=2, numJoints=1, nDims=3)
     comrefNetParams.loadFile = "./eval/net_NYU_COM_AUGMENT.pkl"
     config = {'fx': 588., 'fy': 587., 'cube': (300, 300, 300)}
     # config = {'fx': 241.42, 'fy': 241.42, 'cube': (250, 250, 250)}
     # config = {'fx': 224.5, 'fy': 230.5, 'cube': (300, 300, 300)}  # Creative Gesture Camera
-    # di = ICVLImporter("./capture/")
-    # di.fx = 224.5
-    # di.fy = 230.5
-    # di.ux = 160.
-    # di.uy = 120.
     rtp = RealtimeHandposePipeline(poseNetParams, config, di, verbose=False, comrefNet=comrefNetParams)
 
     # use filenames

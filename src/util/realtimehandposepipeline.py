@@ -29,7 +29,7 @@ import cv2
 import time
 import numpy
 import copy
-from data.transformations import rotatePoints3D
+from data.transformations import rotatePoints3D, rotatePoint3D
 from net.poseregnet import PoseRegNet, PoseRegNetParams
 from net.resnet import ResNet, ResNetParams
 from net.scalenet import ScaleNet, ScaleNetParams
@@ -201,7 +201,7 @@ class RealtimeHandposePipeline(object):
 
             # Display the resulting frame
             starts = time.time()
-            img, poseimg = self.show(frm['frame'], pose)
+            img, poseimg = self.show(frm['frame'], pose, frm['com3D'])
             img = self.addStatusBar(img)
             cv2.imshow('frame', img)
             self.lastshow = time.time()
@@ -275,7 +275,7 @@ class RealtimeHandposePipeline(object):
 
             # Display the resulting frame
             starts = time.time()
-            img, poseimg = self.show(frame, pose)
+            img, poseimg = self.show(frame, pose, com3D)
 
             img = self.addStatusBar(img)
             cv2.imshow('frame', img)
@@ -369,7 +369,7 @@ class RealtimeHandposePipeline(object):
             jj[:, 0] *= (-1.)
         return jj
 
-    def show(self, frame, handpose):
+    def show(self, frame, handpose, com3D):
         """
         Show depth with overlaid joints
         :param frame: depth frame

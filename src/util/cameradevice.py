@@ -364,7 +364,7 @@ class FileDevice(CameraDevice):
 
         self.filenames = filenames
         self.importer = importer
-        self.depth_intrinsics = importer.getCamera()
+        self.depth_intrinsics = importer.getCameraIntrinsics()
         self.color_intrinsics = numpy.zeros((3, 3))
         self.extrinsics = numpy.zeros((3, 4))
         self.mirror = mirror

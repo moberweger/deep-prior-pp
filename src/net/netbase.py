@@ -331,7 +331,7 @@ class NetBase(object):
         """
         for layer in self.layers:
             if isinstance(layer, DropoutLayer) or isinstance(layer, BatchNormLayer):
-                layer.unsetDeterministic()
+                layer.setDeterministic()
 
     def isDeterministic(self):
         """

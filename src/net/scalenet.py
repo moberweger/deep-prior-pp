@@ -113,9 +113,15 @@ class ScaleNetParams(NetBaseParams):
                                                  outputDim=(batchSize, 1024),
                                                  activation=ReLU))
 
+            self.layers.append(DropoutLayerParams(inputDim=self.layers[-1].outputDim,
+                                                  outputDim=self.layers[-1].outputDim))
+
             self.layers.append(HiddenLayerParams(inputDim=self.layers[-1].outputDim,
                                                  outputDim=(batchSize, 1024),
                                                  activation=ReLU))
+
+            self.layers.append(DropoutLayerParams(inputDim=self.layers[-1].outputDim,
+                                                  outputDim=self.layers[-1].outputDim))
 
             self.layers.append(HiddenLayerParams(inputDim=self.layers[-1].outputDim,
                                                  outputDim=(batchSize, numJoints * nDims),

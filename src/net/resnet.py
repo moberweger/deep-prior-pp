@@ -80,6 +80,11 @@ class ResNetParams(NetBaseParams):
             self.numOutputs = 1
 
             self.outputDim = (batchSize, numJoints * nDims)
+        elif type == 4:
+            # set in net class
+            self.numOutputs = 1
+
+            self.outputDim = (batchSize, numJoints * nDims)
         else:
             raise NotImplementedError("not implemented")
 
@@ -275,6 +280,53 @@ class ResNet(NetBase):
                                                                outputDim=self.layers[-1].cfgParams.outputDim),
                                             layerNum=len(self.layers)))
 
+            self.layers.append(HiddenLayer(rng, self.layers[-1].output,
+                                           HiddenLayerParams(inputDim=self.layers[-1].cfgParams.outputDim,
+                                                             outputDim=(batchSize, self.cfgParams.numJoints*self.cfgParams.nDims),
+                                                             activation=None),
+                                           layerNum=len(self.layers)))
+
+            self.output = self.layers[-1].output
+        elif cfgParams.type == 4:
+            # Try ResNet similar configuration
+            depth = 47
+            assert (depth - 2) % 9 == 0, 'depth should be 9n+2 (e.g., 164 or 1001)'
+            n = (depth - 2) / 9
+
+            nStages = [32, 64, 128, 256, 256]
+
+            self.layers.append(ConvPoolLayer(rng, self.inputVar,
+                                             ConvPoolLayerParams(inputDim=self.cfgParams.inputDim, nFilters=nStages[0],
+                                                                 filterDim=(5, 5), stride=(1, 1),
+                                                                 poolsize=(2, 2), border_mode='same', activation=None,
+                                                                 init_method='He'),
+                                             layerNum=len(self.layers)))  # one conv at the beginning
+            rout = self.add_res_layers(rng, self.layers[-1].output, self.layers[-1].cfgParams.outputDim, nStages[1], n, 2)  # Stage 1
+            rout = self.add_res_layers(rng, rout, self.layers[-1].cfgParams.outputDim, nStages[2], n, 2)  # Stage 2
+            rout = self.add_res_layers(rng, rout, self.layers[-1].cfgParams.outputDim, nStages[3], n, 2)  # Stage 3
+            rout = self.add_res_layers(rng, rout, self.layers[-1].cfgParams.outputDim, nStages[4], n, 2)  # Stage 4
+            self.layers.append(BatchNormLayer(rng, rout, BatchNormLayerParams(inputDim=self.layers[-1].cfgParams.outputDim), layerNum=len(self.layers)))
+            self.layers.append(NonlinearityLayer(rng, self.layers[-1].output, NonlinearityLayerParams(inputDim=self.layers[-1].cfgParams.outputDim, activation=ReLU), layerNum=len(self.layers)))
+            self.layers.append(HiddenLayer(rng, self.layers[-1].output.flatten(2),
+                                           HiddenLayerParams(inputDim=(self.layers[-1].cfgParams.outputDim[0], numpy.prod(self.layers[-1].cfgParams.outputDim[1:])),
+                                                             outputDim=(batchSize, 1024), activation=ReLU),
+                                           layerNum=len(self.layers)))
+            self.layers.append(DropoutLayer(rng, self.layers[-1].output,
+                                            DropoutLayerParams(inputDim=self.layers[-1].cfgParams.outputDim,
+                                                               outputDim=self.layers[-1].cfgParams.outputDim),
+                                            layerNum=len(self.layers)))
+            self.layers.append(HiddenLayer(rng, self.layers[-1].output,
+                                           HiddenLayerParams(inputDim=self.layers[-1].cfgParams.outputDim,
+                                                             outputDim=(batchSize, 1024), activation=ReLU),
+                                           layerNum=len(self.layers)))
+            self.layers.append(DropoutLayer(rng, self.layers[-1].output,
+                                            DropoutLayerParams(inputDim=self.layers[-1].cfgParams.outputDim,
+                                                               outputDim=self.layers[-1].cfgParams.outputDim),
+                                            layerNum=len(self.layers)))
+            self.layers.append(HiddenLayer(rng, self.layers[-1].output,
+                                           HiddenLayerParams(inputDim=self.layers[-1].cfgParams.outputDim,
+                                                             outputDim=(batchSize, 30), activation=None),
+                                           layerNum=len(self.layers)))
             self.layers.append(HiddenLayer(rng, self.layers[-1].output,
                                            HiddenLayerParams(inputDim=self.layers[-1].cfgParams.outputDim,
                                                              outputDim=(batchSize, self.cfgParams.numJoints*self.cfgParams.nDims),
