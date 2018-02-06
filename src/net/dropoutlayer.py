@@ -28,7 +28,7 @@ from net.layerparams import LayerParams
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
-__credits__ = ["Paul Wohlhart", "Markus Oberweger"]
+__credits__ = ["Markus Oberweger"]
 __license__ = "GPL"
 __version__ = "1.0"
 __maintainer__ = "Markus Oberweger"
@@ -97,7 +97,10 @@ class DropoutLayer(Layer):
         # faster rng on GPU
         from theano.sandbox.rng_mrg import MRG_RandomStreams
         mask_rng = MRG_RandomStreams(rng.randint(999999))
-        self.mask = mask_rng.binomial(n=1, p=self.prob_keep, size=self.cfgParams.inputDim, dtype=theano.config.floatX)
+        if not (copyLayer is None):
+            self.mask = copyLayer.mask
+        else:
+            self.mask = mask_rng.binomial(n=1, p=self.prob_keep, size=self.cfgParams.inputDim, dtype=theano.config.floatX)
         self.output = ifelse(T.gt(self.flag_on, 0), self.mask * self.inputVar, self.prob_keep * self.inputVar)
         self.output.name = 'output_layer_{}'.format(self.layerNum)
         self.output_pre_act = self.output  # for compatibility

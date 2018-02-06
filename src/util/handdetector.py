@@ -225,6 +225,38 @@ class HandDetector(object):
             yend = int(numpy.floor((com[1] * com[2] / self.fy + size[1] / 2.) / com[2]*self.fy+0.5))
         return xstart, xend, ystart, yend, zstart, zend
 
+    def comToTransform(self, com, size, dsize=(128, 128)):
+        """
+        Calculate affine transform from crop
+        :param com: center of mass, in image coordinates (x,y,z), z in mm
+        :param size: (x,y,z) extent of the source crop volume in mm
+        :return: affine transform
+        """
+
+        xstart, xend, ystart, yend, _, _ = self.comToBounds(com, size)
+
+        trans = numpy.eye(3)
+        trans[0, 2] = -xstart
+        trans[1, 2] = -ystart
+
+        wb = (xend - xstart)
+        hb = (yend - ystart)
+        if wb > hb:
+            scale = numpy.eye(3) * dsize[0] / float(wb)
+            sz = (dsize[0], hb * dsize[0] / wb)
+        else:
+            scale = numpy.eye(3) * dsize[1] / float(hb)
+            sz = (wb * dsize[1] / hb, dsize[1])
+        scale[2, 2] = 1
+
+        xstart = int(numpy.floor(dsize[0] / 2. - sz[1] / 2.))
+        ystart = int(numpy.floor(dsize[1] / 2. - sz[0] / 2.))
+        off = numpy.eye(3)
+        off[0, 2] = xstart
+        off[1, 2] = ystart
+
+        return numpy.dot(off, numpy.dot(scale, trans))
+
     def getCrop(self, dpt, xstart, xend, ystart, yend, zstart, zend, thresh_z=True, background=0):
         """
         Crop patch from image
@@ -395,7 +427,7 @@ class HandDetector(object):
         # ax.plot(com[0],com[1],marker='x')
 
         ##############
-        if self.refineNet is not None and self.importer is not None:
+        if docom is True and self.refineNet is not None and self.importer is not None:
             rz = self.resizeCrop(cropped, dsize)
             newCom3D = self.refineCoM(rz, size, com) + self.importer.jointImgTo3D(com)
             com = self.importer.joint3DToImg(newCom3D)
@@ -635,8 +667,12 @@ class HandDetector(object):
         ystart = int(test_data.shape[3]/2-dsize[1]/2)
         yend = ystart + dsize[1]
         test_data4 = test_data[:, :, ystart:yend, xstart:xend]
-
-        jts = self.refineNet.computeOutput([test_data, test_data2, test_data4])
+        if self.refineNet.cfgParams.numInputs == 1:
+            jts = self.refineNet.computeOutput(test_data)
+        elif self.refineNet.cfgParams.numInputs == 3:
+            jts = self.refineNet.computeOutput([test_data, test_data2, test_data4])
+        else:
+            raise NotImplementedError("Number of inputs is {}".format(self.refineNet.cfgParams.numInputs))
         return jts[0]*(size[2]/2.)
 
     def moveCoM(self, dpt, cube, com, off, joints3D, M, pad_value=0):
@@ -645,7 +681,7 @@ class HandDetector(object):
         :param dpt: cropped depth image with different CoM
         :param cube: metric cube of size (sx,sy,sz)
         :param com: original center of mass, in image coordinates (x,y,z)
-        :param off: offset to center of mass (dx,dy,dz) in image coordinates
+        :param off: offset to center of mass (dx,dy,dz) in 3D coordinates
         :param joints3D: 3D joint coordinates, cropped to old CoM
         :param pad_value: value of padding
         :return: adjusted image, new 3D joint coordinates, new center of mass in image coordinates
@@ -655,86 +691,23 @@ class HandDetector(object):
         if numpy.allclose(off, 0.):
             return dpt, joints3D, com, M
 
-        # new method, correction for shift due to z change:
-        # [(x-u)*(z-v)/f - cube/2] * f/(z-v) = (x-u) - cube/2*f/(z-v)    with u,v random offsets
-        new_com = com + off
-        co = numpy.zeros((3,), dtype='int')
+        # add offset to com
+        new_com = self.importer.joint3DToImg(self.importer.jointImgTo3D(com) + off)
 
         # check for 1/0.
-        if not numpy.allclose(com[2], 0.):
-            # calculate offsets
-            co[0] = off[0] + cube[0] / 2. * self.fx / com[2] * (off[2] / (com[2] + off[2]))
-            co[1] = off[1] + cube[1] / 2. * self.fy / com[2] * (off[2] / (com[2] + off[2]))
-            co[2] = off[2]
-
-            # offset scale
-            xstart, xend, _, _, _, _ = self.comToBounds(com, cube)
-            scoff = dpt.shape[0] / float(xend-xstart)
-            xstart2, xend2, ystart2, yend2, _, _ = self.comToBounds(new_com, cube)
-            scoff2 = dpt.shape[0] / float(xend2-xstart2)
-
-            co = numpy.round(co).astype('int')
-
-            # normalization
-            scalePreX = 1./scoff
-            scalePreY = 1./scoff
-            scalePostX = scoff2
-            scalePostY = scoff2
+        if not (numpy.allclose(com[2], 0.) or numpy.allclose(new_com[2], 0.)):
+            # scale to original size
+            Mnew = self.comToTransform(new_com, cube, dpt.shape)
+            new_dpt = self.recropHand(dpt, Mnew, numpy.linalg.inv(M), dpt.shape, background_value=pad_value,
+                                      nv_val=32000., thresh_z=True, com=new_com, size=cube)
         else:
-            # calculate offsets
-            co[0] = off[0]
-            co[1] = off[1]
-            co[2] = off[2]
-
-            co = numpy.round(co).astype('int')
-
-            # normalization
-            scalePreX = 1.
-            scalePreY = 1.
-            scalePostX = 1.
-            scalePostY = 1.
-
-        # print com, scoff, xend, xstart, dpt.shape, new_com, scalePreX, scalePostX, scalePreY, scalePostY
-
-        new_dpt = numpy.asarray(dpt.copy(), 'float32')
-        new_dpt = self.resizeCrop(new_dpt, (int(round(scalePreX*new_dpt.shape[1])),
-                                            int(round(scalePreY*new_dpt.shape[0]))))
-
-        # shift by padding
-        if co[0] > 0:
-            new_dpt = numpy.pad(new_dpt, ((0, 0), (0, co[0])), mode='constant', constant_values=pad_value)[:, co[0]:]
-        elif co[0] == 0:
-            pass
-        else:
-            new_dpt = numpy.pad(new_dpt, ((0, 0), (-co[0], 0)), mode='constant', constant_values=pad_value)[:, :co[0]]
-    
-        if co[1] > 0:
-            new_dpt = numpy.pad(new_dpt, ((0, co[1]), (0, 0)), mode='constant', constant_values=pad_value)[co[1]:, :]
-        elif co[1] == 0:
-            pass
-        else:
-            new_dpt = numpy.pad(new_dpt, ((-co[1], 0), (0, 0)), mode='constant', constant_values=pad_value)[:co[1], :]
-
-        rz = self.resizeCrop(new_dpt, (int(round(scalePostX*new_dpt.shape[1])),
-                                       int(round(scalePostY*new_dpt.shape[0]))))
-        new_dpt = numpy.zeros_like(dpt)
-        new_dpt[0:rz.shape[0], 0:rz.shape[1]] = rz[0:128, 0:128]
+            Mnew = M
+            new_dpt = dpt
 
         # adjust joint positions to new CoM
         new_joints3D = joints3D + self.importer.jointImgTo3D(com) - self.importer.jointImgTo3D(new_com)
 
-        # recalculate transformation matrix
-        trans = numpy.eye(3)
-        trans[0, 2] = -xstart2
-        trans[1, 2] = -ystart2
-        scale = numpy.eye(3) * scalePostX
-        scale[2, 2] = 1
-
-        off = numpy.eye(3)
-        off[0, 2] = 0
-        off[1, 2] = 0
-
-        return new_dpt, new_joints3D, new_com, numpy.dot(off, numpy.dot(scale, trans))
+        return new_dpt, new_joints3D, new_com, Mnew
 
     def rotateHand(self, dpt, cube, com, rot, joints3D, pad_value=0):
         """
@@ -755,7 +728,13 @@ class HandDetector(object):
         rot = numpy.mod(rot, 360)
 
         M = cv2.getRotationMatrix2D((dpt.shape[1]//2, dpt.shape[0]//2), -rot, 1)
-        new_dpt = cv2.warpAffine(dpt, M, (dpt.shape[1], dpt.shape[0]), flags=cv2.INTER_NEAREST,
+        if self.resizeMethod == self.RESIZE_CV2_NN:
+            flags = cv2.INTER_NEAREST
+        elif self.resizeMethod == self.RESIZE_CV2_LINEAR:
+            flags = cv2.INTER_LINEAR
+        else:
+            raise NotImplementedError
+        new_dpt = cv2.warpAffine(dpt, M, (dpt.shape[1], dpt.shape[0]), flags=flags,
                                  borderMode=cv2.BORDER_CONSTANT, borderValue=pad_value)
 
         com3D = self.importer.jointImgTo3D(com)
@@ -766,6 +745,7 @@ class HandDetector(object):
         new_joints3D = (self.importer.jointsImgTo3D(data_2D) - com3D)
 
         return new_dpt, new_joints3D, rot
+
 
     def scaleHand(self, dpt, cube, com, sc, joints3D, M, pad_value=0):
         """
@@ -788,67 +768,43 @@ class HandDetector(object):
         # check for 1/0.
         if not numpy.allclose(com[2], 0.):
             # scale to original size
-            xstart, xend, ystart, yend, _, _ = self.comToBounds(com, cube)
-            scoff = dpt.shape[0] / float(xend-xstart)
-            xstart2, xend2, ystart2, yend2, _, _ = self.comToBounds(com, new_cube)
-            scoff2 = dpt.shape[0] / float(xend2-xstart2)
-
-            # normalization
-            scalePreX = 1./scoff
-            scalePreY = 1./scoff
-            scalePostX = scoff2
-            scalePostY = scoff2
+            Mnew = self.comToTransform(com, new_cube, dpt.shape)
+            new_dpt = self.recropHand(dpt, Mnew, numpy.linalg.inv(M), dpt.shape, background_value=pad_value,
+                                      nv_val=32000., thresh_z=True, com=com, size=cube)
         else:
-            xstart = xstart2 = 0
-            ystart = ystart2 = 0
-            xend = xend2 = 0
-            yend = yend2 = 0
-
-            # normalization
-            scalePreX = 1.
-            scalePreY = 1.
-            scalePostX = 1.
-            scalePostY = 1.
-
-        # print com, scoff, xend, xstart, dpt.shape, com2, scalePreX, scalePostX, scalePreY, scalePostY
-
-        new_dpt = numpy.asarray(dpt.copy(), 'float32')
-        new_dpt = self.resizeCrop(new_dpt, (int(round(scalePreX*new_dpt.shape[1])),
-                                            int(round(scalePreY*new_dpt.shape[0]))))
-
-        # enlarge cube by padding, or cropping image
-        xdelta = abs(xstart-xstart2)
-        ydelta = abs(ystart-ystart2)
-        if sc > 1.:
-            new_dpt = numpy.pad(new_dpt, ((xdelta, xdelta), (ydelta, ydelta)), mode='constant', constant_values=pad_value)
-        elif numpy.allclose(sc, 1.):
-            pass
-        else:
-            new_dpt = new_dpt[xdelta:-(xdelta+1), ydelta:-(ydelta+1)]
-
-        rz = self.resizeCrop(new_dpt, (int(round(scalePostX*new_dpt.shape[1])),
-                                       int(round(scalePostY*new_dpt.shape[0]))))
-        new_dpt = numpy.zeros_like(dpt)
-        new_dpt[0:rz.shape[0], 0:rz.shape[1]] = rz[0:128, 0:128]
+            Mnew = M
+            new_dpt = dpt
 
         new_joints3D = joints3D
 
-        # recalculate transformation matrix
-        trans = numpy.eye(3)
-        trans[0, 2] = -xstart2
-        trans[1, 2] = -ystart2
-        scale = numpy.eye(3) * scalePostX
-        scale[2, 2] = 1
+        return new_dpt, new_joints3D, new_cube, Mnew
 
-        off = numpy.eye(3)
-        off[0, 2] = 0
-        off[1, 2] = 0
+    def recropHand(self, crop, M, Mnew, target_size, background_value=0., nv_val=0., thresh_z=True, com=None,
+                   size=(250, 250, 250)):
 
-        return new_dpt, new_joints3D, new_cube, numpy.dot(off, numpy.dot(scale, trans))
+        if self.resizeMethod == self.RESIZE_CV2_NN:
+            flags = cv2.INTER_NEAREST
+        elif self.resizeMethod == self.RESIZE_CV2_LINEAR:
+            flags = cv2.INTER_LINEAR
+        else:
+            raise NotImplementedError
+        warped = cv2.warpPerspective(crop, numpy.dot(M, Mnew), target_size, flags=flags,
+                                     borderMode=cv2.BORDER_CONSTANT, borderValue=float(background_value))
+        warped[numpy.isclose(warped, nv_val)] = background_value
+
+        if thresh_z is True:
+            assert com is not None
+            _, _, _, _, zstart, zend = self.comToBounds(com, size)
+            msk1 = numpy.logical_and(warped < zstart, warped != 0)
+            msk2 = numpy.logical_and(warped > zend, warped != 0)
+            warped[msk1] = zstart
+            warped[msk2] = 0.  # backface is at 0, it is set later
+
+        return warped
 
     @staticmethod
     def sampleRandomPoses(importer, rng, base_poses, base_com, base_cube, num_poses, aug_modes,
-                          retall=False, rot3D=False):
+                          retall=False, rot3D=False, sigma_com=None, sigma_sc=None, rot_range=None):
         """
         Sample random poses such that we can estimate the subspace more robustly
         :param importer: importer
@@ -863,6 +819,15 @@ class HandDetector(object):
         :return: random poses
         """
 
+        if sigma_com is None:
+            sigma_com = 5.
+
+        if sigma_sc is None:
+            sigma_sc = 0.02
+
+        if rot_range is None:
+            rot_range = 180.
+
         all_modes = ['none', 'rot', 'sc', 'com', 'rot+com', 'com+rot',
                      'rot+com+sc', 'rot+sc+com', 'sc+rot+com', 'sc+com+rot', 'com+sc+rot', 'com+rot+sc']
         assert all([aug_modes[i] in all_modes for i in xrange(len(aug_modes))])
@@ -872,10 +837,9 @@ class HandDetector(object):
         new_cube = numpy.zeros((int(num_poses), 3), dtype=base_poses.dtype)
         modes = rng.randint(0, len(aug_modes), int(num_poses))
         ridxs = rng.randint(0, base_poses.shape[0], int(num_poses))
-        base_com2D = importer.joints3DToImg(base_com)
-        off = rng.randn(int(num_poses), 3) * 7.
-        sc = numpy.fabs(rng.randn(int(num_poses)) * 0.1 + 1.)
-        rot = rng.uniform(0, 360, size=(int(num_poses), 3))
+        off = rng.randn(int(num_poses), 3) * sigma_com
+        sc = numpy.fabs(rng.randn(int(num_poses)) * sigma_sc + 1.)
+        rot = rng.uniform(-rot_range, rot_range, size=(int(num_poses), 3))
 
         if aug_modes == ['none']:
             if retall is True:
@@ -888,11 +852,10 @@ class HandDetector(object):
             ridx = ridxs[i]
             cube = base_cube[ridx]
             com3D = base_com[ridx]
-            com = base_com2D[ridx]
             pose = base_poses[ridx]
             if aug_modes[mode] == 'com':
                 # augment com
-                new_com[i] = importer.jointImgTo3D(com + off[i])
+                new_com[i] = com3D + off[i]
                 new_cube[i] = cube
                 new_poses[i] = (pose + com3D - new_com[i]) / (new_cube[i][2]/2.)
             elif aug_modes[mode] == 'rot':
@@ -901,7 +864,7 @@ class HandDetector(object):
                 new_cube[i] = cube
                 if rot3D is False:
                     joint_2D = importer.joints3DToImg(pose + new_com[i])
-                    data_2D = rotatePoints2D(joint_2D, com[0:2], rot[i, 0])
+                    data_2D = rotatePoints2D(joint_2D, importer.joint3DToImg(com3D)[0:2], rot[i, 0])
                     new_poses[i] = (importer.jointsImgTo3D(data_2D) - new_com[i]) / (new_cube[i][2]/2.)
                 else:
                     new_poses[i] = (rotatePoints3D(pose + new_com[i], new_com[i], rot[i, 0], rot[i, 1], rot[i, 2]) - new_com[i]) / (new_cube[i][2]/2.)
@@ -917,7 +880,7 @@ class HandDetector(object):
                 new_poses[i] = pose / (new_cube[i][2]/2.)
             elif aug_modes[mode] == 'rot+com' or aug_modes[mode] == 'com+rot':
                 # augment com+rot
-                new_com[i] = importer.jointImgTo3D(com + off[i])
+                new_com[i] = com3D + off[i]
                 new_cube[i] = cube
                 pose = (pose + com3D - new_com[i])
                 if rot3D is False:
@@ -928,7 +891,7 @@ class HandDetector(object):
                     new_poses[i] = (rotatePoints3D(pose + new_com[i], new_com[i], rot[i, 0], rot[i, 1], rot[i, 2]) - new_com[i]) / (new_cube[i][2] / 2.)
             elif aug_modes[mode] == 'rot+com+sc' or aug_modes[mode] == 'rot+sc+com' or aug_modes == 'sc+rot+com' or aug_modes == 'sc+com+rot' or aug_modes == 'com+sc+rot' or aug_modes == 'com+rot+sc':
                 # augment com+scale+rot
-                new_com[i] = importer.jointImgTo3D(com + off[i])
+                new_com[i] = com3D + off[i]
                 new_cube[i] = cube
                 pose = (pose + com3D - new_com[i])
                 pose = pose * sc[i]

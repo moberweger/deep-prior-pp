@@ -62,8 +62,9 @@ if __name__ == '__main__':
     d1, g1 = trainDataSet.imgStackDepthOnly(trainSeqs[0].name)
     train_data = numpy.ones((nSamp, d1.shape[1], d1.shape[2], d1.shape[3]), dtype='float32')
     train_gt3D = numpy.ones((nSamp, g1.shape[1], g1.shape[2]), dtype='float32')
-    train_data_com = numpy.ones((nSamp, 3), dtype='float32')
     train_data_cube = numpy.ones((nSamp, 3), dtype='float32')
+    train_data_com = numpy.ones((nSamp, 3), dtype='float32')
+    train_data_M = numpy.ones((nSamp, 3, 3), dtype='float32')
     del d1, g1
     gc.collect()
     gc.collect()
@@ -73,14 +74,15 @@ if __name__ == '__main__':
         d, g = trainDataSet.imgStackDepthOnly(seq.name)
         train_data[oldIdx:oldIdx+d.shape[0]] = d
         train_gt3D[oldIdx:oldIdx+d.shape[0]] = g
-        train_data_com[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([da.com for da in seq.data])
         train_data_cube[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([seq.config['cube']]*d.shape[0])
+        train_data_com[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([da.com for da in seq.data])
+        train_data_M[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([da.T for da in seq.data])
         oldIdx += d.shape[0]
         del d, g
         gc.collect()
         gc.collect()
         gc.collect()
-    shuffle_many_inplace([train_data, train_gt3D, train_data_com, train_data_cube], random_state=rng)
+    shuffle_many_inplace([train_data, train_gt3D, train_data_com, train_data_cube, train_data_M], random_state=rng)
 
     mb = (train_data.nbytes) / (1024 * 1024)
     print("data size: {}Mb".format(mb))
@@ -177,12 +179,13 @@ if __name__ == '__main__':
                                                                                 'hd': HandDetector(train_data[0, 0].copy(), abs(di.fx), abs(di.fy), importer=di)}}
 
     print("setup trainer")
-    poseNetTrainer = ScaleNetTrainer(poseNet, poseNetTrainerParams, rng)
+    poseNetTrainer = ScaleNetTrainer(poseNet, poseNetTrainerParams, rng, './eval/'+eval_prefix)
     poseNetTrainer.setData(train_data, train_gt3D[:, di.crop_joint_idx, :], val_data, val_gt3D[:, di.crop_joint_idx, :])
     poseNetTrainer.addStaticData({'val_data_x1': val_data2, 'val_data_x2': val_data4})
     poseNetTrainer.addManagedData({'train_data_x1': train_data2, 'train_data_x2': train_data4})
     poseNetTrainer.addManagedData({'train_data_com': train_data_com,
                                    'train_data_cube': train_data_cube,
+                                   'train_data_M': train_data_M,
                                    'train_gt3D': train_gt3D})
     poseNetTrainer.compileFunctions()
 

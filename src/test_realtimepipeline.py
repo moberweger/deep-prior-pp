@@ -73,6 +73,6 @@ if __name__ == '__main__':
         filenames.append(i.fileName)
     dev = FileDevice(filenames, di)
 
-    # # use depth camera
+    # use depth camera
     # dev = CreativeCameraDevice(mirror=True)
     rtp.processVideoThreaded(dev)

@@ -138,11 +138,3 @@ class VtkPointCloud:
         renderWindow.SetWindowName("XYZ Data Viewer")
 
         renderWindowInteractor.Start()
-
-if __name__ == "__main__":
-    pointCloud = VtkPointCloud()
-    pcl = numpy.random.randn(100, 3)*10.
-    for k in xrange(pcl.shape[0]):
-        pointCloud.addPoint(pcl[k])
-
-    VtkPointCloud.viewer([pointCloud])

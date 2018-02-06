@@ -36,6 +36,28 @@ EPS = numpy.cast[numpy.float32](3.*numpy.finfo(numpy.float32).eps)
 PI = numpy.cast[numpy.float32](numpy.pi)
 
 
+def sigmoid(x):
+    """
+    Sigmoid unit
+    :param x: input value
+    :return: sigmoid(x)
+    """
+    import theano.tensor as T
+
+    return T.nnet.sigmoid(x)
+
+
+def tanh(x):
+    """
+    Tanh unit
+    :param x: input value
+    :return: tanh(x)
+    """
+    import theano.tensor as T
+
+    return T.tanh(x)
+
+
 def ReLU(x):
     """
     Rectified linear unit

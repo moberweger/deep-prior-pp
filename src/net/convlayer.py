@@ -61,7 +61,7 @@ class ConvLayerParams(LayerParams):
         self._activation = activation
         self._hasbias = hasBias
         self._stride = stride
-        self._border_mode = border_mode
+        self._border_mode = 'half' if border_mode == 'same' else border_mode
         self._init_method = init_method
         self.update()
 
@@ -88,7 +88,10 @@ class ConvLayerParams(LayerParams):
 
     @border_mode.setter
     def border_mode(self, value):
+        if value == 'same':
+            value = 'half'
         self._border_mode = value
+
         self.update()
 
     @property
@@ -145,7 +148,7 @@ class ConvLayerParams(LayerParams):
                                self._nFilters,      # number of kernels
                                (self._inputDim[2] + self._filterDim[0] - 1),   # output H
                                (self._inputDim[3] + self._filterDim[1] - 1))   # output W
-        elif self._border_mode == 'same':
+        elif self._border_mode == 'half':
             self._outputDim = (self._inputDim[0],   # batch_size
                                self._nFilters,      # number of kernels
                                self._inputDim[2],   # output H
@@ -209,13 +212,6 @@ class ConvLayer(Layer):
         assert image_shape[1] == filter_shape[1]
         self.inputVar = inputVar
 
-        # there are "num inputVar feature maps * filter height * filter width"
-        # inputs to each hidden unit
-        fan_in = numpy.prod(filter_shape[1:])
-        # each unit in the lower layer receives a gradient from:
-        # "num output feature maps * filter height * filter width" / filter stride
-        fan_out = (filter_shape[0] * numpy.prod(filter_shape[2:]) / numpy.prod(filter_stride))
-
         if not (copyLayer is None):
             self.W = copyLayer.W
         else:
@@ -230,27 +226,13 @@ class ConvLayer(Layer):
                 b_values = numpy.zeros((filter_shape[0],), dtype=floatX)
                 self.b = theano.shared(value=b_values, borrow=True, name='convB{}'.format(layerNum))
 
-        if border_mode == 'same':
-            # convolve inputVar feature maps with filters
-            conv_out = conv2d(input=inputVar,
-                              filters=self.W,
-                              filter_shape=filter_shape,
-                              input_shape=image_shape,
-                              subsample=filter_stride,
-                              border_mode='full')
-
-            # perform full convolution and crop output of input size
-            offset_2 = filter_shape[2]//2
-            offset_3 = filter_shape[3]//2
-            conv_out = conv_out[:, :, offset_2:offset_2+image_shape[2], offset_3:offset_3+image_shape[3]]
-        else:
-            # convolve inputVar feature maps with filters
-            conv_out = conv2d(input=inputVar,
-                              filters=self.W,
-                              filter_shape=filter_shape,
-                              input_shape=image_shape,
-                              subsample=filter_stride,
-                              border_mode=border_mode)
+        # convolve inputVar feature maps with filters
+        conv_out = conv2d(input=inputVar,
+                          filters=self.W,
+                          filter_shape=filter_shape,
+                          input_shape=image_shape,
+                          subsample=filter_stride,
+                          border_mode=border_mode)
 
         # add the bias term. Since the bias is a vector (1D array), we first reshape it to a tensor of shape
         # (1,n_filters,1,1). Each bias will thus be broadcasted across mini-batches and feature map width & height

@@ -122,14 +122,27 @@ class BatchNormLayer(Layer):
         axes = (0,) + tuple(range(2, len(inputDim)))
 
         # create parameters, ignoring all dimensions in axes
-        shape = [size for axis, size in enumerate(inputDim) if axis not in axes]
+        shape = tuple([size for axis, size in enumerate(inputDim) if axis not in axes])
         if any(size is None for size in shape):
             raise ValueError("BatchNormLayer needs specified input sizes for all axes not normalized over.")
 
-        self.beta = theano.shared(numpy.zeros(shape, dtype=floatX), name='beta{}'.format(layerNum), borrow=True)
-        self.gamma = theano.shared(numpy.ones(shape, dtype=floatX), name='gamma{}'.format(layerNum), borrow=True)
+        if not (copyLayer is None):
+            assert copyLayer.beta.get_value().shape == shape
+            self.beta = copyLayer.beta
+        else:
+            self.beta = theano.shared(numpy.zeros(shape, dtype=floatX), name='beta{}'.format(layerNum), borrow=True)
+        if not (copyLayer is None):
+            assert copyLayer.gamma.get_value().shape == shape
+            self.gamma = copyLayer.gamma
+        else:
+            self.gamma = theano.shared(numpy.ones(shape, dtype=floatX), name='gamma{}'.format(layerNum), borrow=True)
+        # mean and std are not shared, since streams might come from different statistics
+        # and it is not supported by this implementation!?
         self.mean = theano.shared(numpy.zeros(shape, dtype=floatX), name='mean{}'.format(layerNum), borrow=True)
         self.inv_std = theano.shared(numpy.ones(shape, dtype=floatX), name='inv_std{}'.format(layerNum), borrow=True)
+        if not (copyLayer is None):
+            self.mean.set_value(copyLayer.mean.get_value())
+            self.inv_std.set_value(copyLayer.inv_std.get_value())
         self.weights = []
         self.params = []
         if self.cfgParams._learn_beta is True:
@@ -177,6 +190,7 @@ class BatchNormLayer(Layer):
         # self.output = (inputVar - mean) * (gamma * inv_std) + beta
         # where either inv_std == 1 or std == 1, depending on which one is used
         self.output = T.nnet.batch_normalization(inputVar, gamma=gamma*inv_std, beta=beta, mean=mean, std=1, mode=mode)
+        self.output.name = 'output_layer_{}'.format(self.layerNum)
         self.output_pre_act = self.output
 
     def unsetDeterministic(self):

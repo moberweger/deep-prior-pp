@@ -61,6 +61,7 @@ if __name__ == '__main__':
     train_data, train_gt3D = trainDataSet.imgStackDepthOnly('train')
     train_data_cube = numpy.asarray([Seq1.config['cube']]*train_data.shape[0], dtype='float32')
     train_data_com = numpy.asarray([d.com for d in Seq1.data], dtype='float32')
+    train_data_M = numpy.asarray([da.T for da in Seq1.data], dtype='float32')
     train_gt3Dcrop = numpy.asarray([d.gt3Dcrop for d in Seq1.data], dtype='float32')
 
     mb = (train_data.nbytes) / (1024 * 1024)
@@ -116,6 +117,7 @@ if __name__ == '__main__':
     poseNetTrainer.addStaticData({'pca_data': pca.components_, 'mean_data': pca.mean_})
     poseNetTrainer.addManagedData({'train_data_cube': train_data_cube,
                                    'train_data_com': train_data_com,
+                                   'train_data_M': train_data_M,
                                    'train_gt3Dcrop': train_gt3Dcrop})
     poseNetTrainer.compileFunctions(compileDebugFcts=False)
 
@@ -156,7 +158,6 @@ if __name__ == '__main__':
     poseNet.save("./eval/{}/network_prior.pkl".format(eval_prefix))
 
     ###################################################################
-    #  test
     print("Testing ...")
     gt3D = []
     joints = []
@@ -180,7 +181,7 @@ if __name__ == '__main__':
     print("{}".format([hpe.getJointMaxError(j) for j in range(joints[0].shape[0])]))
 
     # save results
-    cPickle.dump(joints, open("./eval/{}/result_{}_{}.pkl".format(eval_prefix,os.path.split(__file__)[1],eval_prefix), "wb"), protocol=cPickle.HIGHEST_PROTOCOL)
+    cPickle.dump(joints, open("./eval/{}/result_{}_{}.pkl".format(eval_prefix, os.path.split(__file__)[1], eval_prefix), "wb"), protocol=cPickle.HIGHEST_PROTOCOL)
 
     print "Testing baseline"
 

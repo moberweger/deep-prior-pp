@@ -45,10 +45,10 @@ __status__ = "Development"
 
 class DepthImporter(object):
     """
-    provide baisc functionality to load depth data
+    provide basic functionality to load depth data
     """
 
-    def __init__(self, fx, fy, ux, uy):
+    def __init__(self, fx, fy, ux, uy, hand=None):
         """
         Initialize object
         :param fx: focal length in x direction
@@ -64,6 +64,7 @@ class DepthImporter(object):
         self.depth_map_size = (320, 240)
         self.refineNet = None
         self.crop_joint_idx = 0
+        self.hand = hand
 
     def jointsImgTo3D(self, sample):
         """
@@ -188,14 +189,14 @@ class ICVLImporter(DepthImporter):
     provide functionality to load data from the ICVL dataset
     """
 
-    def __init__(self, basepath, useCache=True, cacheDir='./cache/', refineNet=None):
+    def __init__(self, basepath, useCache=True, cacheDir='./cache/', refineNet=None, hand=None):
         """
         Constructor
         :param basepath: base path of the ICVL dataset
         :return:
         """
 
-        super(ICVLImporter, self).__init__(241.42, 241.42, 160., 120.)  # see Qian et.al.
+        super(ICVLImporter, self).__init__(241.42, 241.42, 160., 120., hand)  # see Qian et.al.
 
         self.depth_map_size = (320, 240)
         self.basepath = basepath
@@ -229,8 +230,7 @@ class ICVLImporter(DepthImporter):
         """
         return 32001
         
-    def loadSequence(self, seqName, subSeq=None, Nmax=float('inf'), shuffle=False, rng=None, docom=False, cube=None,
-                     hand=None):
+    def loadSequence(self, seqName, subSeq=None, Nmax=float('inf'), shuffle=False, rng=None, docom=False, cube=None):
         """
         Load an image sequence from the dataset
         :param seqName: sequence name, e.g. train
@@ -250,9 +250,12 @@ class ICVLImporter(DepthImporter):
             config = {'cube': cube}
 
         if subSeq is None:
-            pickleCache = '{}/{}_{}_None_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
+            pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, self.hand,
+                                                               HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
         else:
-            pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, ''.join(subSeq), HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
+            pickleCache = '{}/{}_{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName,
+                                                                  ''.join(subSeq), self.hand,
+                                                                  HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
         if self.useCache:
             if os.path.isfile(pickleCache):
                 print("Loading cache data from {}".format(pickleCache))
@@ -274,21 +277,27 @@ class ICVLImporter(DepthImporter):
                 if len(subSeq) > 1:
                     missing = False
                     for i in range(len(subSeq)):
-                        if not os.path.isfile('{}/{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, subSeq[i], HandDetector.detectionModeToString(docom, self.refineNet is not None))):
+                        if not os.path.isfile('{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__,
+                                                                                   seqName, self.hand, subSeq[i],
+                                                                                   HandDetector.detectionModeToString(docom, self.refineNet is not None))):
                             missing = True
                             print("missing: {}".format(subSeq[i]))
                             break
 
                     if not missing:
                         # load first data
-                        pickleCache = '{}/{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, subSeq[0], HandDetector.detectionModeToString(docom, self.refineNet is not None))
+                        pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__,
+                                                                           seqName, self.hand, subSeq[0],
+                                                                           HandDetector.detectionModeToString(docom, self.refineNet is not None))
                         print("Loading cache data from {}".format(pickleCache))
                         f = open(pickleCache, 'rb')
                         (seqName, fullData, config) = cPickle.load(f)
                         f.close()
                         # load rest of data
                         for i in range(1, len(subSeq)):
-                            pickleCache = '{}/{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, subSeq[i], HandDetector.detectionModeToString(docom, self.refineNet is not None))
+                            pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__,
+                                                                               seqName, self.hand, subSeq[i],
+                                                                               HandDetector.detectionModeToString(docom, self.refineNet is not None))
                             print("Loading cache data from {}".format(pickleCache))
                             f = open(pickleCache, 'rb')
                             (seqName, data, config) = cPickle.load(f)
@@ -353,8 +362,10 @@ class ICVLImporter(DepthImporter):
                 i += 1
                 continue
             dpt = self.loadDepthMap(dptFileName)
-            if hand is not None:
-                raise NotImplementedError()
+            if self.hand is not None:
+                if self.hand != self.sides[seqName]:
+                    raise NotImplementedError()
+                    dpt = dpt[:, ::-1]
 
             # joints in image coordinates
             gtorig = np.zeros((self.numJoints, 3), np.float32)
@@ -377,6 +388,7 @@ class ICVLImporter(DepthImporter):
                 dpt, M, com = hd.cropArea3D(com=gtorig[self.crop_joint_idx], size=config['cube'], docom=docom)
             except UserWarning:
                 print("Skipping image {}, no hand detected".format(dptFileName))
+                i += 1
                 continue
 
             com3D = self.jointImgTo3D(com)
@@ -525,14 +537,14 @@ class MSRA15Importer(DepthImporter):
     - P8/4: 168
     """
 
-    def __init__(self, basepath, useCache=True, cacheDir='./cache/', refineNet=None, detectorNet=None, derotNet=None):
+    def __init__(self, basepath, useCache=True, cacheDir='./cache/', refineNet=None, detectorNet=None, derotNet=None, hand=None):
         """
         Constructor
         :param basepath: base path of the MSRA dataset
         :return:
         """
 
-        super(MSRA15Importer, self).__init__(241.42, 241.42, 160., 120.)  # see Sun et.al.
+        super(MSRA15Importer, self).__init__(241.42, 241.42, 160., 120., hand)  # see Sun et.al.
 
         self.depth_map_size = (320, 240)
         self.basepath = basepath
@@ -582,7 +594,7 @@ class MSRA15Importer(DepthImporter):
         """
         return 32001
 
-    def loadSequence(self, seqName, subSeq=None, Nmax=float('inf'), shuffle=False, rng=None, docom=False, cube=None, hand=None):
+    def loadSequence(self, seqName, subSeq=None, Nmax=float('inf'), shuffle=False, rng=None, docom=False, cube=None):
         """
         Load an image sequence from the dataset
         :param seqName: sequence name, e.g. subject1
@@ -601,9 +613,11 @@ class MSRA15Importer(DepthImporter):
             config = {'cube': cube}
 
         if subSeq is None:
-            pickleCache = '{}/{}_{}_None_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
+            pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, self.hand,
+                                                               HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
         else:
-            pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, ''.join(subSeq), HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
+            pickleCache = '{}/{}_{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, self.hand,
+                                                               ''.join(subSeq), HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
         if self.useCache & os.path.isfile(pickleCache):
             print("Loading cache data from {}".format(pickleCache))
             f = open(pickleCache, 'rb')
@@ -661,8 +675,6 @@ class MSRA15Importer(DepthImporter):
                     print("File {} does not exist!".format(dptFileName))
                     continue
                 dpt = self.loadDepthMap(dptFileName)
-                if hand is not None:
-                    raise NotImplementedError()
 
                 # joints in image coordinates
                 gt3Dorig = np.zeros((self.numJoints, 3), np.float32)
@@ -677,6 +689,15 @@ class MSRA15Importer(DepthImporter):
 
                 # normalized joints in 3D coordinates
                 gtorig = self.joints3DToImg(gt3Dorig)
+
+                if self.hand is not None:
+                    if self.hand != self.sides[seqName]:
+                        gtorig[:, 0] -= dpt.shape[1] / 2.
+                        gtorig[:, 0] *= (-1)
+                        gtorig[:, 0] += dpt.shape[1] / 2.
+                        gt3Dorig = self.jointsImgTo3D(gtorig)
+                        dpt = dpt[:, ::-1]
+
                 # print gt3D
                 # self.showAnnotatedDepth(DepthFrame(dpt,gtorig,gtorig,0,gt3Dorig,gt3Dcrop,com3D,dptFileName,'',''))
                 # Detect hand
@@ -823,7 +844,7 @@ class MSRA15Importer(DepthImporter):
             numrows, numcols = frame.dpt.shape
             col = int(x+0.5)
             row = int(y+0.5)
-            if col>=0 and col<numcols and row>=0 and row<numrows:
+            if 0 <= col < numcols and 0 <= row < numrows:
                 z = frame.dpt[row, col]
                 return 'x=%1.4f, y=%1.4f, z=%1.4f'%(x, y, z)
             else:
@@ -859,14 +880,15 @@ class NYUImporter(DepthImporter):
     provide functionality to load data from the NYU hand dataset
     """
 
-    def __init__(self, basepath, useCache=True, cacheDir='./cache/', refineNet=None, allJoints=False):
+    def __init__(self, basepath, useCache=True, cacheDir='./cache/', refineNet=None, 
+                 allJoints=False, hand=None):
         """
         Constructor
         :param basepath: base path of the ICVL dataset
         :return:
         """
 
-        super(NYUImporter, self).__init__(588.03, 587.07, 320., 240.)
+        super(NYUImporter, self).__init__(588.03, 587.07, 320., 240., hand)
 
         self.depth_map_size = (640, 480)
         self.basepath = basepath
@@ -918,7 +940,7 @@ class NYUImporter(DepthImporter):
         """
         return 32001
 
-    def loadSequence(self, seqName, Nmax=float('inf'), shuffle=False, rng=None, docom=False, cube=None, hand=None):
+    def loadSequence(self, seqName, Nmax=float('inf'), shuffle=False, rng=None, docom=False, cube=None):
         """
         Load an image sequence from the dataset
         :param seqName: sequence name, e.g. train
@@ -932,7 +954,9 @@ class NYUImporter(DepthImporter):
             assert len(cube) == 3
             config = {'cube': cube}
 
-        pickleCache = '{}/{}_{}_{}_{}_{}_cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, self.allJoints, HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
+        pickleCache = '{}/{}_{}_{}_{}_{}_{}__cache.pkl'.format(self.cacheDir, self.__class__.__name__, seqName, 
+                                                                 self.hand, self.allJoints,
+                                                                 HandDetector.detectionModeToString(docom, self.refineNet is not None), config['cube'][0])
         if self.useCache:
             if os.path.isfile(pickleCache):
                 print("Loading cache data from {}".format(pickleCache))
@@ -956,7 +980,6 @@ class NYUImporter(DepthImporter):
         trainlabels = '{}/{}/joint_data.mat'.format(self.basepath, seqName)
 
         mat = scipy.io.loadmat(trainlabels)
-        names = mat['joint_names'][0]
         joints3D = mat['joint_xyz'][0]
         joints2D = mat['joint_uvd'][0]
         if self.allJoints:
@@ -971,7 +994,7 @@ class NYUImporter(DepthImporter):
         pbar.start()
 
         data = []
-        i=0
+        i = 0
         for line in range(joints3D.shape[0]):
             dptFileName = '{0:s}/depth_1_{1:07d}.png'.format(objdir, line+1)
 
@@ -980,8 +1003,10 @@ class NYUImporter(DepthImporter):
                 i += 1
                 continue
             dpt = self.loadDepthMap(dptFileName)
-            if hand is not None:
-                raise NotImplementedError()
+            if self.hand is not None:
+                if self.hand != self.sides[seqName]:
+                    raise NotImplementedError()
+                    dpt = dpt[:, ::-1]
 
             # joints in image coordinates
             gtorig = np.zeros((self.numJoints, 3), np.float32)
@@ -1017,6 +1042,7 @@ class NYUImporter(DepthImporter):
                 dpt, M, com = hd.cropArea3D(com=gtorig[self.crop_joint_idx], size=config['cube'], docom=docom)
             except UserWarning:
                 print("Skipping image {}, no hand detected".format(dptFileName))
+                i += 1
                 continue
 
             com3D = self.jointImgTo3D(com)
@@ -1024,7 +1050,7 @@ class NYUImporter(DepthImporter):
             gtcrop = transformPoints2D(gtorig, M)
 
             # print("{}".format(gt3Dorig))
-            # self.showAnnotatedDepth(DepthFrame(dpt,gtorig,gtcrop,M,gt3Dorig,gt3Dcrop,com3D,dptFileName,'',''))
+            # self.showAnnotatedDepth(DepthFrame(dpt,gtorig,gtcrop,M,gt3Dorig,gt3Dcrop,com3D,dptFileName,'','',{}))
 
             data.append(DepthFrame(dpt.astype(np.float32), gtorig, gtcrop, M, gt3Dorig, gt3Dcrop, com3D, dptFileName,
                                    '', self.sides[seqName], {}))

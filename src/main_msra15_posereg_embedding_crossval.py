@@ -77,6 +77,7 @@ if __name__ == '__main__':
         train_gt3D = numpy.ones((nSamp, g1.shape[1], g1.shape[2]), dtype='float32')
         train_data_cube = numpy.ones((nSamp, 3), dtype='float32')
         train_data_com = numpy.ones((nSamp, 3), dtype='float32')
+        train_data_M = numpy.ones((nSamp, 3, 3), dtype='float32')
         train_gt3Dcrop = numpy.ones_like(train_gt3D)
         del d1, g1
         gc.collect()
@@ -89,13 +90,14 @@ if __name__ == '__main__':
             train_gt3D[oldIdx:oldIdx+d.shape[0]] = g
             train_data_cube[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([seq.config['cube']]*d.shape[0])
             train_data_com[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([da.com for da in seq.data])
+            train_data_M[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([da.T for da in seq.data])
             train_gt3Dcrop[oldIdx:oldIdx+d.shape[0]] = numpy.asarray([da.gt3Dcrop for da in seq.data])
             oldIdx += d.shape[0]
             del d, g
             gc.collect()
             gc.collect()
             gc.collect()
-        shuffle_many_inplace([train_data, train_gt3D, train_data_cube, train_data_com, train_gt3Dcrop], random_state=rng)
+        shuffle_many_inplace([train_data, train_gt3D, train_data_cube, train_data_com, train_gt3Dcrop, train_data_M], random_state=rng)
 
         mb = (train_data.nbytes) / (1024 * 1024)
         print("data size: {}Mb".format(mb))
@@ -151,6 +153,7 @@ if __name__ == '__main__':
         poseNetTrainer.setData(train_data, train_gt3D_embed, val_data, val_gt3D_embed)
         poseNetTrainer.addManagedData({'train_data_cube': train_data_cube,
                                        'train_data_com': train_data_com,
+                                       'train_data_M': train_data_M,
                                        'train_gt3Dcrop': train_gt3Dcrop})
         poseNetTrainer.compileFunctions(compileDebugFcts=False)
 

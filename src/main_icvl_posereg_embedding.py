@@ -52,7 +52,7 @@ if __name__ == '__main__':
     Seq1 = di.loadSequence('train', ['0'], shuffle=True, rng=rng, docom=docom)
     trainSeqs = [Seq1]
 
-    Seq2 = di.loadSequence('test_seq_1')
+    Seq2 = di.loadSequence('test_seq_1', docom=docom)
     testSeqs = [Seq2]
 
     # create training data
@@ -60,6 +60,7 @@ if __name__ == '__main__':
     train_data, train_gt3D = trainDataSet.imgStackDepthOnly('train')
     train_data_cube = numpy.asarray([Seq1.config['cube']]*train_data.shape[0], dtype='float32')
     train_data_com = numpy.asarray([d.com for d in Seq1.data], dtype='float32')
+    train_data_M = numpy.asarray([d.T for d in Seq1.data], dtype='float32')
     train_gt3Dcrop = numpy.asarray([d.gt3Dcrop for d in Seq1.data], dtype='float32')
 
     mb = (train_data.nbytes) / (1024 * 1024)
@@ -113,6 +114,7 @@ if __name__ == '__main__':
     poseNetTrainer.addStaticData({'pca_data': pca.components_, 'mean_data': pca.mean_})
     poseNetTrainer.addManagedData({'train_data_cube': train_data_cube,
                                    'train_data_com': train_data_com,
+                                   'train_data_M': train_data_M,
                                    'train_gt3Dcrop': train_gt3Dcrop})
     poseNetTrainer.compileFunctions(compileDebugFcts=False)
 

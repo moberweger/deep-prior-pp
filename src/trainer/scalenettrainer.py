@@ -215,19 +215,22 @@ class ScaleNetTrainer(NetTrainer):
             if (self.getNumMacroBatches() > 1) and (last is True):
                 img = self.train_data_xDBlast[i, 0].copy()
                 com = self.train_data_comDBlast[i].copy()
+                M = self.train_data_MDBlast[i].copy()
                 cube = self.train_data_cubeDBlast[i].copy()
                 gt3D = self.train_data_yDBlast[i].copy().reshape((1, 3))
             else:
                 img = self.train_data_xDB[i, 0].copy()
                 com = self.train_data_comDB[i].copy()
+                M = self.train_data_MDB[i].copy()
                 cube = self.train_data_cubeDB[i].copy()
                 gt3D = self.train_data_yDB[i].copy().reshape((1, 3))
 
-            imgD, gt3D, cube, com2D, M = self.augmentCrop(
-                img, gt3D*(cube[2] / 2.), macro_params['args']['di'].joint3DToImg(com), cube, numpy.eye(3),
+            imgD, _, gt3D, cube, com2D, M, _ = self.augmentCrop(
+                img, gt3D*(cube[2] / 2.), macro_params['args']['di'].joint3DToImg(com), cube, M,
                 macro_params['args']['aug_modes'], macro_params['args']['hd'], macro_params['args']['normZeroOne'],
                 sigma_com=(macro_params['args']['sigma_com'] if 'sigma_com' in macro_params['args'] else None),
-                sigma_sc=(macro_params['args']['sigma_sc'] if 'sigma_sc' in macro_params['args'] else None))
+                sigma_sc=(macro_params['args']['sigma_sc'] if 'sigma_sc' in macro_params['args'] else None),
+                rot_range=(macro_params['args']['rot_range'] if 'rot_range' in macro_params['args'] else None))
             com = macro_params['args']['di'].jointImgTo3D(com2D)
 
             new_data['train_data_x'][idx] = imgD

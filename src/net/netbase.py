@@ -159,7 +159,7 @@ class NetBase(object):
         # remove filtered params
         if not hasattr(self, '_params_filter'):
             self._params_filter = []
-        prms = [p for l in self.layers for p in l.params if p.name not in self._params_filter]
+        prms = [p for l in self.layers for p in l.params if p.auto_name not in [an.auto_name for an in self._params_filter]]
 
         # only unique variables, remove shared weights from list
         return dict((obj.auto_name, obj) for obj in prms).values()
@@ -170,9 +170,9 @@ class NetBase(object):
 
     @params_filter.setter
     def params_filter(self, bl):
-        names = [p.name for l in self.layers for p in l.params]
+        names = [p.auto_name for l in self.layers for p in l.params]
         for b in bl:
-            if b not in names:
+            if b.auto_name not in names:
                 raise UserWarning("Param {} not in model!".format(b))
         self._params_filter = bl
 
@@ -197,7 +197,7 @@ class NetBase(object):
         # remove filtered weights
         if not hasattr(self, '_weights_filter'):
             self._weights_filter = []
-        prms = [p for l in self.layers for p in l.weights if p.name not in self._weights_filter]
+        prms = [p for l in self.layers for p in l.weights if p.name not in [an.auto_name for an in self._weights_filter]]
 
         # only unique variables, remove shared weights from list
         return dict((obj.auto_name, obj) for obj in prms).values()
@@ -208,9 +208,9 @@ class NetBase(object):
 
     @weights_filter.setter
     def weights_filter(self, bl):
-        names = [p.name for l in self.layers for p in l.weights]
+        names = [p.auto_name for l in self.layers for p in l.weights]
         for b in bl:
-            if b not in names:
+            if b.auto_name not in names:
                 raise UserWarning("Weight {} not in model!".format(b))
         self._weights_filter = bl
 
@@ -326,7 +326,7 @@ class NetBase(object):
 
     def setDeterministic(self):
         """
-        Disables dropout and batch normalizatoin in all layers, ie for testing
+        Disables dropout and batch normalization in all layers, ie for testing
         :return: None
         """
         for layer in self.layers:
@@ -421,7 +421,7 @@ class NetBase(object):
         handle.close()
         print 'Saved model parameter to {}'.format(filename)
 
-    def load(self, filename):
+    def load(self, filename, raise_on_error=True):
         """
         Load the parameters for this network from disk.
         :param filename: Load the parameters of this network from a pickle file at the named path. If this name ends in
@@ -430,6 +430,8 @@ class NetBase(object):
         """
         if filename is None:
             return
+
+        print 'Loading model parameters from {}'.format(filename)
 
         opener = gzip.open if filename.lower().endswith('.gz') else open
         handle = opener(filename, 'rb')
@@ -441,6 +443,12 @@ class NetBase(object):
             print "Differences are:"
             print "\n".join(differences)
         for layer in self.layers:
+            if '{}-values'.format(layer.layerNum) not in saved:
+                if raise_on_error:
+                    raise ImportError("{} not in saved variables!".format('{}-values'.format(layer.layerNum)))
+                else:
+                    print "WARNING: {} not in saved variables!".format('{}-values'.format(layer.layerNum))
+                continue
             if (len(layer.params) + len(layer.params_nontrained)) != len(saved['{}-values'.format(layer.layerNum)]):
                 print "Warning: Layer parameters for layer {} do not match. Trying to fit on shape!".format(layer.layerNum)
                 n_assigned = 0
@@ -451,7 +459,10 @@ class NetBase(object):
                             n_assigned += 1
 
                 if n_assigned != (len(layer.params) + len(layer.params_nontrained)):
-                    raise ImportError("Could not load all necessary variables!")
+                    if raise_on_error:
+                        raise ImportError("Could not load all necessary variables!")
+                    else:
+                        print "WARNING: Could not load all necessary variables!"
                 else:
                     print "Found fitting parameters!"
             else:
@@ -459,5 +470,8 @@ class NetBase(object):
                     if p.get_value().shape == v.shape:
                         p.set_value(v)
                     else:
-                        print "WARNING: Skipping parameter for {}! Shape {} does not fit {}.".format(p.name, p.get_value().shape, v.shape)
-        print 'Loaded model parameters from {}'.format(filename)
+                        if raise_on_error:
+                            raise ImportError("Skipping parameter for {}! Shape {} does not fit {}.".format(p.name, p.get_value().shape, v.shape))
+                        else:
+                            print "WARNING: Skipping parameter for {}! Shape {} does not fit {}.".format(p.name, p.get_value().shape, v.shape)
+        print 'Done'

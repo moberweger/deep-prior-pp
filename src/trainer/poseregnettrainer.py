@@ -226,6 +226,7 @@ class PoseRegNetTrainer(NetTrainer):
                 img = self.train_data_xDBlast[i, 0].copy()
                 com = macro_params['args']['di'].joint3DToImg(self.train_data_comDBlast[i])
                 cube = self.train_data_cubeDBlast[i].copy()
+                M = self.train_data_MDBlast[i].copy()
                 if 'proj' in macro_params['args'] and macro_params['args']['proj'] is not None:
                     gt3Dcrop = self.train_gt3DcropDBlast[i].copy()
                 else:
@@ -234,16 +235,19 @@ class PoseRegNetTrainer(NetTrainer):
                 img = self.train_data_xDB[i, 0].copy()
                 com = macro_params['args']['di'].joint3DToImg(self.train_data_comDB[i])
                 cube = self.train_data_cubeDB[i].copy()
+                M = self.train_data_MDB[i].copy()
                 if 'proj' in macro_params['args'] and macro_params['args']['proj'] is not None:
                     gt3Dcrop = self.train_gt3DcropDB[i].copy()
                 else:
                     gt3Dcrop = self.train_data_yDB[i].copy().reshape((-1, 3)) * (cube[2] / 2.)
 
-            imgD, curLabel, _, _, _ = self.augmentCrop(
-                img, gt3Dcrop, com, cube, numpy.eye(3), macro_params['args']['aug_modes'],
+            imgD, _, curLabel, cube, com2D, M, _ = self.augmentCrop(
+                img, gt3Dcrop, com, cube, M, macro_params['args']['aug_modes'],
                 macro_params['args']['hd'], macro_params['args']['normZeroOne'],
                 sigma_com=(macro_params['args']['sigma_com'] if 'sigma_com' in macro_params['args'] else None),
-                sigma_sc=(macro_params['args']['sigma_sc'] if 'sigma_sc' in macro_params['args'] else None))
+                sigma_sc=(macro_params['args']['sigma_sc'] if 'sigma_sc' in macro_params['args'] else None),
+                rot_range=(macro_params['args']['rot_range'] if 'rot_range' in macro_params['args'] else None))
+            com = macro_params['args']['di'].jointImgTo3D(com2D)
 
             # import scipy
             # scipy.misc.imshow(numpy.concatenate([train_data_xDB[i+start_idx, 0], imgD], axis=0))

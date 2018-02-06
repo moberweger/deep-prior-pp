@@ -20,7 +20,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import numpy
-from util.theano_helpers import ReLU
+from util.theano_helpers import ReLU, sigmoid, tanh
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -55,13 +55,12 @@ class Layer(object):
         return numpy.reshape(wInitVals.swapaxes(0, 1), init_vals.shape)
 
     def getOptimalInitMethod(self, act_str):
-        import theano.tensor as T
 
         if act_str == ReLU.__name__:
             return 'He'
-        elif act_str == T.nnet.sigmoid.__class__.__name__:
+        elif act_str == sigmoid.__name__:
             return 'sigmoid'
-        elif act_str in T.tanh.name:
+        elif act_str in tanh.__name__:
             return 'tanh'
         elif act_str is None or str(act_str) == 'None':
             return None

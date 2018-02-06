@@ -32,7 +32,6 @@ import theano
 import psutil
 from net.convlayer import ConvLayer
 from net.convpoollayer import ConvPoolLayer
-from util.handdetector import HandDetector
 from util.helpers import chunks
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
@@ -52,7 +51,7 @@ class NetTrainerParams(object):
         self.learning_rate = 0.01
         self.weightreg_factor = 0.001  # regularization on the weights
         self.use_early_stopping = True
-        self.lr_of_ep = lambda ep: numpy.float32(self.learning_rate/10.) if ep <= 1 else numpy.float32(self.learning_rate*numpy.exp(-0.04*ep))  # learning rate as a function of epochs
+        self.lr_of_ep = lambda ep: numpy.float32(self.learning_rate/10.) if ep <= 1 else numpy.float32(self.learning_rate/3.) if 1 < ep <= 2 else numpy.float32(self.learning_rate*numpy.exp(-0.04*ep))  # learning rate as a function of epochs
         self.snapshot_last = 5  # make an backup copy every 5 epochs
         self.snapshot_freq = None  # make an intermediate save of the trained network all N epochs
         # parallel augmentation, off by default
@@ -129,6 +128,7 @@ class NetTrainer(object):
         """
         Set the data of the network, not managed within training iterations, 
         e.g. used for validation or other small data
+        Important difference to addStaticData: this data is aligned to macrobatch size
         :param data: training data and labels specified as dictionary
         :return: None
         """
@@ -187,11 +187,20 @@ class NetTrainer(object):
                 raise ValueError("Number of samples must be the same as number of labels.")
 
             if self.getNumMacroBatches() > 1:
-                setattr(self, key+'DB', data[key][0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()])
-                setattr(self, key+'DBlast', self.alignData(data[key][(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=data[key]))
+                if self.cfgParams.para_load is True:
+                    setattr(self, key+'DB', sharedmem.copy(data[key][0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()]))
+                    setattr(self, key+'DBlast', sharedmem.copy(self.alignData(data[key][(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=data[key])))
+                else:
+                    # save memory, we do not need extra sharedmem
+                    setattr(self, key+'DB', data[key][0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()])
+                    setattr(self, key+'DBlast', self.alignData(data[key][(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=data[key]))
                 self.managedVar.append(key)
             else:
-                setattr(self, key+'DB', self.alignData(data[key]))
+                if self.cfgParams.para_load is True:
+                    setattr(self, key+'DB', sharedmem.copy(self.alignData(data[key])))
+                else:
+                    # save memory, we do not need extra sharedmem
+                    setattr(self, key + 'DB', self.alignData(data[key]))
             self.trainingVar.append(key)
 
             # shared variable already exists?
@@ -248,16 +257,27 @@ class NetTrainer(object):
         # keep backup of original data
         # pad last macro batch separately to save memory
         if self.getNumMacroBatches() > 1:
-            self.train_data_xDB = train_data[0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()]
-            self.train_data_xDBlast = self.alignData(train_data[(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=train_data)
-            self.train_data_yDB = train_y[0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()]
-            self.train_data_yDBlast = self.alignData(train_y[(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=train_y)
+            if self.cfgParams.para_load is True:
+                self.train_data_xDB = sharedmem.copy(train_data[0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()])
+                self.train_data_xDBlast = sharedmem.copy(self.alignData(train_data[(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=train_data))
+                self.train_data_yDB = sharedmem.copy(train_y[0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()])
+                self.train_data_yDBlast = sharedmem.copy(self.alignData(train_y[(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=train_y))
+            else:
+                # save memory, we do not need extra sharedmem
+                self.train_data_xDB = train_data[0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()]
+                self.train_data_xDBlast = self.alignData(train_data[(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=train_data)
+                self.train_data_yDB = train_y[0:(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch()]
+                self.train_data_yDBlast = self.alignData(train_y[(self.getNumMacroBatches()-1)*self.getNumSamplesPerMacroBatch():], fillData=train_y)
             self.managedVar.append('train_data_x')
             self.managedVar.append('train_data_y')
         else:
-            self.train_data_xDB = self.alignData(train_data)
-            self.train_data_yDB = self.alignData(train_y)
-
+            if self.cfgParams.para_load is True:
+                self.train_data_xDB = sharedmem.copy(self.alignData(train_data))
+                self.train_data_yDB = sharedmem.copy(self.alignData(train_y))
+            else:
+                # save memory, we do not need extra sharedmem
+                self.train_data_xDB = self.alignData(train_data)
+                self.train_data_yDB = self.alignData(train_y)
         self.trainingVar.append('train_data_x')
         self.trainingVar.append('train_data_y')
 
@@ -372,7 +392,7 @@ class NetTrainer(object):
             padded = numpy.pad(data, sz, mode='constant', constant_values=0)
 
         if fillData is None:
-            fillData = padded
+            fillData = data
 
         # fill full macrobatch with random data, just to be sure...
         if (data.shape[0] % alignSize) != 0:
@@ -443,10 +463,17 @@ class NetTrainer(object):
 
     def getNumMiniBatchesPerChunk(self):
         """
-        Get number of mini batches per macro batch
-        :return: number of mini batches per macro batch
+        Get number of mini batches per chunk
+        :return: number of mini batches per chunk
         """
         return int(self.getNumMiniBatchesPerMacroBatch() * self.getNumMacroBatches())
+
+    def getNumSamplesPerChunk(self):
+        """
+        Get number of samples per chunk
+        :return: number of samples per chunk
+        """
+        return self.getNumMiniBatchesPerChunk() * self.cfgParams.batch_size
 
     def getGPUMemAligned(self):
         """
@@ -644,6 +671,7 @@ class NetTrainer(object):
                     raise ValueError("Variable " + var + " not defined!")
                 if var.startswith("train_"):
                     self.augment_data_queue[var] = sharedmem.empty_like(getattr(self, var+'DB')[0:self.getNumSamplesPerMacroBatch()])
+                    self.augment_data_queue[var][:] = numpy.nan  # make sure they are set later on
 
             # start loading process (no threads because of GIL)
             self.augment_processes = [multiprocessing.Process(target=self.loadMacroBatchMP,
@@ -663,6 +691,7 @@ class NetTrainer(object):
                     raise ValueError("Variable " + var + " not defined!")
                 if var.startswith("train_"):
                     self.augment_data_queue[var] = numpy.zeros_like(getattr(self, var + 'DB')[0:self.getNumSamplesPerMacroBatch()])
+                    self.augment_data_queue[var][:] = numpy.nan  # make sure they are set later on
         else:
             pass
 
@@ -679,6 +708,7 @@ class NetTrainer(object):
                     if hasattr(self, var+'DBlast'):
                         sz[0] += getattr(self, var+'DBlast').shape[0]
                     self.load_data_queue[var] = sharedmem.empty(tuple(sz), dtype=getattr(self, var+'DB').dtype)
+                    self.load_data_queue[var][:] = numpy.nan  # make sure they are set later on
 
             # start loading process (no threads because of GIL)
             self.load_process = multiprocessing.Process(target=self.loadDataMP,
@@ -806,14 +836,13 @@ class NetTrainer(object):
 
                 minibatch_avg_cost = self.train_model(mini_idx, learning_rate)
 
+                print("minibatch {0:4d}, average cost: {1}".format(minibatch_index, minibatch_avg_cost))
+
                 if numpy.any(numpy.isnan(minibatch_avg_cost)):
-                    print("minibatch {0:4d}, average cost: NaN".format(minibatch_index))
                     # check which vars are nan
                     self.checkNaNs()
 
                     assert False
-
-                print("minibatch {0:4d}, average cost: {1}".format(minibatch_index, minibatch_avg_cost))
 
                 train_costs.append(minibatch_avg_cost)
 
@@ -844,12 +873,9 @@ class NetTrainer(object):
 
                     self.poseNet.unsetDeterministic()
 
-                    print "{}: epoch {}, minibatch {}/{}, validation cost {} error {}".format(time.ctime(),
-                                                                                              self.epoch,
-                                                                                              minibatch_index + 1,
-                                                                                              self.getNumFullMiniBatches(),
-                                                                                              this_validation_loss,
-                                                                                              [vo[-1] for vo in validation_obs])
+                    print "{}: epoch {}, LR {}, minibatch {}/{}, validation cost {} error {}".format(
+                        time.ctime(), self.epoch, learning_rate, minibatch_index + 1,
+                        self.getNumFullMiniBatches(), this_validation_loss, [vo[-1] for vo in validation_obs])
 
                     # if we got the best validation score until now
                     if this_validation_loss < best_validation_loss:
@@ -872,7 +898,7 @@ class NetTrainer(object):
             self.poseNet.weightVals = bestParams
             print('Best params at epoch %d' % bestParamsEp)
 
-        if self.cfgParams.augment_fun_params['fun'] is not None:
+        if self.cfgParams.augment_fun_params['fun'] is not None or self.cfgParams.load_fun_params['fun'] is not None:
             self.unsetDataLoading()
 
         return train_costs, wvals, validation_obs[0] if len(validation_obs) == 1 else validation_obs
@@ -888,7 +914,7 @@ class NetTrainer(object):
                 print("NaN in weights", param_i.name)
 
     def augmentCrop(self, img, gt3Dcrop, com, cube, M, aug_modes, hd, normZeroOne=False, sigma_com=None,
-                    sigma_sc=None):
+                    sigma_sc=None, rot_range=None):
         """
         Commonly used function to augment hand poses
         :param img: image
@@ -898,6 +924,9 @@ class NetTrainer(object):
         :param aug_modes: augmentation modes
         :param hd: hand detector
         :param normZeroOne: normalization
+        :param sigma_com: sigma of com noise
+        :param sigma_sc: sigma of scale noise
+        :param rot_range: rotation range in degrees
         :return: image, 3D annotations, com, cube
         """
 
@@ -910,6 +939,9 @@ class NetTrainer(object):
         if sigma_sc is None:
             sigma_sc = 0.02
 
+        if rot_range is None:
+            rot_range = 180.
+
         if normZeroOne is True:
             img = img * cube[2] + (com[2] - (cube[2] / 2.))
         else:
@@ -918,18 +950,27 @@ class NetTrainer(object):
 
         mode = self.rng.randint(0, len(aug_modes))
         off = self.rng.randn(3) * sigma_com  # +-px/mm
-        rot = self.rng.uniform(0, 360)
+        rot = self.rng.uniform(-rot_range, rot_range)
         sc = abs(1. + self.rng.randn() * sigma_sc)
         if aug_modes[mode] == 'com':
+            rot = 0.
+            sc = 1.
             imgD, new_joints3D, com, M = hd.moveCoM(img.astype('float32'), cube, com, off, gt3Dcrop, M, pad_value=0)
             curLabel = new_joints3D / (cube[2] / 2.)
         elif aug_modes[mode] == 'rot':
-            imgD, new_joints3D, _ = hd.rotateHand(img.astype('float32'), cube, com, rot, gt3Dcrop, pad_value=0)
+            off = numpy.zeros((3,))
+            sc = 1.
+            imgD, new_joints3D, rot = hd.rotateHand(img.astype('float32'), cube, com, rot, gt3Dcrop, pad_value=0)
             curLabel = new_joints3D / (cube[2] / 2.)
         elif aug_modes[mode] == 'sc':
+            off = numpy.zeros((3,))
+            rot = 0.
             imgD, new_joints3D, cube, M = hd.scaleHand(img.astype('float32'), cube, com, sc, gt3Dcrop, M, pad_value=0)
             curLabel = new_joints3D / (cube[2] / 2.)
         elif aug_modes[mode] == 'none':
+            off = numpy.zeros((3,))
+            sc = 1.
+            rot = 0.
             imgD = img
             curLabel = gt3Dcrop / (cube[2] / 2.)
         else:
@@ -950,4 +991,4 @@ class NetTrainer(object):
             imgD -= com[2]
             imgD /= (cube[2] / 2.)
 
-        return imgD, curLabel, numpy.asarray(cube), com, M
+        return imgD, None, curLabel, numpy.asarray(cube), com, M, rot
