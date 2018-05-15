@@ -84,7 +84,7 @@ if __name__ == '__main__':
     Seq8_2 = di.loadSequence('P8', shuffle=True, rng=rng, docom=True)
     Seq8_2 = Seq8_2._replace(name='P8_com')
     trainSeqs = [Seq0_1, Seq0_2, Seq1_1, Seq1_2, Seq2_1, Seq2_2, Seq3_1, Seq3_2,
-                 Seq4_1, Seq4_2, Seq5_1, Seq5_2, Seq6_1, Seq6_1, Seq7_1, Seq7_2,
+                 Seq4_1, Seq4_2, Seq5_1, Seq5_2, Seq6_1, Seq6_2, Seq7_1, Seq7_2,
                  Seq8_1, Seq8_2]
 
     Seq_0 = di.loadSequence('P0', docom=True)
