@@ -102,6 +102,9 @@ class NetTrainer(object):
             # get GPU memory info
             mem_info = theano.sandbox.cuda.cuda_ndarray.cuda_ndarray.mem_info()
             self.memorySize = (mem_info[0] / 1024 ** 2) / float(memory_factor)  # MB
+        elif 'cuda' in theano.config.device:
+            # new gpuarray interface
+            self.memorySize = (theano.gpuarray.init_dev.devmap[theano.config.device].free_gmem / 1024 ** 2) / float(memory_factor)  # MB
         elif 'cpu' in theano.config.device:
             # get CPU memory info
             self.memorySize = (psutil.virtual_memory().available / 1024 ** 2) / float(memory_factor)  # MB
