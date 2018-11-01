@@ -54,7 +54,7 @@ if __name__ == '__main__':
     # testSeqs = [Seq2]
 
     di = NYUImporter('../data/NYU/')
-    Seq2 = di.loadSequence('test_1')
+    Seq2 = di.loadSequence('test')
     testSeqs = [Seq2]
 
     # load trained network
