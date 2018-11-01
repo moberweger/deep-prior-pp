@@ -89,6 +89,10 @@ ENV/
 .ropeproject
 
 # Data and pretrained model
-data/
-src/eval/
-src/cache/
+/data/
+/cache/
+/src/eval/
+/src/cache/
+
+# VSCode
+.vscode
