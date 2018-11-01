@@ -30,7 +30,7 @@ from net.resnet import ResNetParams, ResNet
 from net.scalenet import ScaleNetParams, ScaleNet
 from util.realtimehandposepipeline import RealtimeHandposePipeline
 from data.importers import ICVLImporter, NYUImporter, MSRA15Importer
-from util.cameradevice import CreativeCameraDevice, FileDevice
+from util.cameradevice import *
 
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
