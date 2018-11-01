@@ -21,7 +21,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os
-os.environ["THEANO_FLAGS"] = "device=gpu,floatX=float32"
+os.environ["THEANO_FLAGS"] = "device=cuda*,floatX=float32"
 
 import numpy
 from data.dataset import NYUDataset, ICVLDataset
