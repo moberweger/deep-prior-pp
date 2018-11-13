@@ -74,5 +74,5 @@ if __name__ == '__main__':
     dev = FileDevice(filenames, di)
 
     # use depth camera
-    # dev = CreativeCameraDevice(mirror=True)
+    dev = RealSenseCameraDevice()
     rtp.processVideoThreaded(dev)

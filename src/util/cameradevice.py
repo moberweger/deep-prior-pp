@@ -23,10 +23,12 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from sys import exit
 import time
 import numpy
 import cv2
 import scipy.misc
+import math
 try:
     import lib_dscapture as dsc
     LIB_DSC_IMPORTED = True
@@ -37,8 +39,14 @@ try:
     import openni
     OPENNI_IMPORTED = True
 except ImportError:
-    print "Warning: Module openni not found , disabling DepthSenseCameraDevice"
+    print "Warning: Module openni not found, disabling DepthSenseCameraDevice"
     OPENNI_IMPORTED = False
+try:
+    import pyrealsense2 as rs
+    REALSENSE_IMPORTED = True
+except ImportError:
+    print "Warning: pyrealsense2 modules not found, disabling RealSenseCameraDevice"
+    REALSENSE_IMPORTED = False
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -286,7 +294,7 @@ if OPENNI_IMPORTED:
 
         def start(self):
             """
-            Stop device
+            Start device
             :return: None
             """
             self.ctx = openni.Context()
@@ -354,6 +362,60 @@ if OPENNI_IMPORTED:
 
                 return True, dpt
 
+if REALSENSE_IMPORTED:
+    class RealSenseCameraDevice(CameraDevice):
+        """
+        Class for RealSense cameras supported by the version 2 of the library
+        """
+
+        def __init__(self, mirror=False):
+            """
+            Initialize device
+            :param mirror: mirror image
+            """
+
+            super(RealSenseCameraDevice, self).__init__(mirror)
+
+        def start(self):
+            """
+            Start device
+            return: None
+            """
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_stream(
+                rs.stream.depth, 640, 480, rs.format.z16, 30)
+            self.config.enable_stream(
+                rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            profile = self.pipeline.start(self.config)
+            sensor = profile.get_device().first_depth_sensor()
+            sensor.set_option(rs.option.enable_auto_exposure, 0)
+
+        def stop(self):
+            """
+            Stop device
+            :return: None
+            """
+            self.pipeline.stop()
+
+        def getDepth(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+            frames = self.pipeline.wait_for_frames()
+            depth_frame = frames.get_depth_frame()
+            depth_image = numpy.asanyarray(depth_frame.get_data()) * 0.8
+            return True, depth_image
+
+        def getRGB(self):
+            """
+            Return a bit color image
+            :return: color image as numpy array
+            """
+            frames = self.pipeline.wait_for_frames()
+            color_frame = frames.get_color_frame()
+            return True,numpy.asanyarray(color_frame.get_data())
 
 class FileDevice(CameraDevice):
     """
