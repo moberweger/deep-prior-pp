@@ -83,7 +83,7 @@ class RealtimeHandposePipeline(object):
         # synchronization between processes
         self.sync = Manager().dict(config=config, fid=0,
                                    crop=numpy.ones((128, 128), dtype='float32'),
-                                   com3D=numpy.asarray([0, 0, 300]),
+                                   com3D=numpy.asarray([0, 0, 300], dtype='float32'),
                                    frame=numpy.ones((240, 320), dtype='float32'), M=numpy.eye(3))
         self.start_prod = Value(c_bool, False)
         self.start_con = Value(c_bool, False)
