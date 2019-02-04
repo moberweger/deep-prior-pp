@@ -1,6 +1,7 @@
 # DeepPrior++: Improving Fast and Accurate 3D Hand Pose Estimation
 
 Author: Markus Oberweger <oberweger@icg.tugraz.at>
+Modified by Sandro Kalbermatter for evaluation purposes
 
 ## Requirements:
   * OS
