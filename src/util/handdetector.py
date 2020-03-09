@@ -533,7 +533,7 @@ class HandDetector(object):
             part_ref[part_ref > zend] = 0
             part_ref[part_ref != 0] = 10  # set to something
             ret, thresh_ref = cv2.threshold(part_ref, 1, 255, cv2.THRESH_BINARY)
-            contours_ref, _ = cv2.findContours(thresh_ref.astype(dtype=numpy.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            _, contours_ref, _ = cv2.findContours(thresh_ref.astype(dtype=numpy.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             # find the largest contour
             areas = [cv2.contourArea(cc) for cc in contours_ref]
             c_max = numpy.argmax(areas)
@@ -618,7 +618,7 @@ class HandDetector(object):
                         part_ref[part_ref > zend] = 0
                         part_ref[part_ref != 0] = 10  # set to something
                         ret, thresh_ref = cv2.threshold(part_ref, 1, 255, cv2.THRESH_BINARY)
-                        contours_ref, _ = cv2.findContours(thresh_ref.astype(dtype=numpy.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                        _, contours_ref, _ = cv2.findContours(thresh_ref.astype(dtype=numpy.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
                         # find the largest contour
                         areas = [cv2.contourArea(cc) for cc in contours_ref]
                         c_max = numpy.argmax(areas)

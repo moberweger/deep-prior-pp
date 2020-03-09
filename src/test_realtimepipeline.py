@@ -21,7 +21,7 @@ along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os
-os.environ["THEANO_FLAGS"] = "device=gpu,floatX=float32"
+os.environ["THEANO_FLAGS"] = "device=cuda,floatX=float32"
 
 import numpy
 from data.dataset import NYUDataset, ICVLDataset
@@ -30,7 +30,7 @@ from net.resnet import ResNetParams, ResNet
 from net.scalenet import ScaleNetParams, ScaleNet
 from util.realtimehandposepipeline import RealtimeHandposePipeline
 from data.importers import ICVLImporter, NYUImporter, MSRA15Importer
-from util.cameradevice import CreativeCameraDevice, FileDevice
+from util.cameradevice import *
 
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     # testSeqs = [Seq2]
 
     di = NYUImporter('../data/NYU/')
-    Seq2 = di.loadSequence('test_1')
+    Seq2 = di.loadSequence('test')
     testSeqs = [Seq2]
 
     # load trained network
@@ -74,5 +74,5 @@ if __name__ == '__main__':
     dev = FileDevice(filenames, di)
 
     # use depth camera
-    # dev = CreativeCameraDevice(mirror=True)
+    dev = DepthSenseCameraDevice(mirror=True)
     rtp.processVideoThreaded(dev)

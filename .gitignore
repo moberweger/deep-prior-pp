@@ -87,3 +87,12 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+# Data and pretrained model
+/data/
+/cache/
+/src/eval/
+/src/cache/
+
+# VSCode
+.vscode

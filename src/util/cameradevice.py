@@ -23,12 +23,42 @@ You should have received a copy of the GNU General Public License
 along with DeepPrior.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from sys import exit
 import time
 import numpy
 import cv2
 import scipy.misc
-import lib_dscapture as dsc
-import openni
+import math
+try:
+    import lib_dscapture as dsc
+    LIB_DSC_IMPORTED = True
+except ImportError:
+    print "Warning: Module lib_dscapture not found, disabling CreativeCameraDevice"
+    LIB_DSC_IMPORTED = False
+try:
+    from openni import openni2
+    OPENNI2_IMPORTED = True
+except ImportError:
+    print "Warning: Module openni2 not found, disabling ONI_2_DepthSenseCameraDevice"
+    OPENNI2_IMPORTED = False
+try:
+    import openni
+    OPENNI_IMPORTED = True
+except ImportError:
+    print "Warning: Module openni not found, disabling DepthSenseCameraDevice"
+    OPENNI_IMPORTED = False
+try:
+    import pyrealsense2 as rs
+    REALSENSE_IMPORTED = True
+except ImportError:
+    print "Warning: pyrealsense2 modules not found, disabling RealSenseCameraDevice"
+    REALSENSE_IMPORTED = False
+
+# nathan sharp
+from openni import openni2
+# from openni import _openni2 as c_api
+# OPENNI_IMPORTED = True
+# REALSENSE_IMPORTED = False
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -160,190 +190,321 @@ class CameraDevice(object):
         """
         raise NotImplementedError("!")
 
+if LIB_DSC_IMPORTED:
+    class CreativeCameraDevice(CameraDevice):
+        """ DepthSense camera class, for Creative Gesture Camera, DS325, etc."""
 
-class CreativeCameraDevice(CameraDevice):
-    """ DepthSense camera class, for Creative Gesture Camera, DS325, etc."""
+        def __init__(self, mirror=False):
+            """
+            Initialize device
+            :param mirror: mirror image
+            """
 
-    def __init__(self, mirror=False):
-        """
-        Initialize device
-        :param mirror: mirror image
-        """
+            super(CreativeCameraDevice, self).__init__(mirror)
 
-        super(CreativeCameraDevice, self).__init__(mirror)
+        def start(self):
+            """
+            Start device
+            :return: None
+            """
+            dsc.start()
 
-    def start(self):
-        """
-        Start device
-        :return: None
-        """
-        dsc.start()
+        def stop(self):
+            """
+            Stop device
+            :return: None
+            """
+            dsc.stop()
 
-    def stop(self):
-        """
-        Stop device
-        :return: None
-        """
-        dsc.stop()
+        def getDepth(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
 
-    def getDepth(self):
-        """
-        Return a median smoothed depth image
-        :return: depth data as numpy array
-        """
+            if self.mirror:
+                depth = dsc.getDepthMap()[:, ::-1]
+            else:
+                depth = dsc.getDepthMap()
+            depth = cv2.medianBlur(depth, 3)
+            return (numpy.count_nonzero(depth) != 0), numpy.asarray(depth, numpy.float32)
 
-        if self.mirror:
-            depth = dsc.getDepthMap()[:, ::-1]
-        else:
-            depth = dsc.getDepthMap()
-        depth = cv2.medianBlur(depth, 3)
-        return (numpy.count_nonzero(depth) != 0), numpy.asarray(depth, numpy.float32)
+        def getRGB(self):
+            """
+            Return a bit color image
+            :return: color image as numpy array
+            """
 
-    def getRGB(self):
-        """
-        Return a bit color image
-        :return: color image as numpy array
-        """
+            if self.mirror:
+                image = dsc.getColourMap()[:, ::-1, :]
+            else:
+                image = dsc.getColourMap()
+            return (numpy.count_nonzero(image) != 0), image
 
-        if self.mirror:
-            image = dsc.getColourMap()[:, ::-1, :]
-        else:
-            image = dsc.getColourMap()
-        return (numpy.count_nonzero(image) != 0), image
+        def getGrayScale(self):
+            """
+            Return a grayscale image
+            :return: grayscale image as numpy array
+            """
 
-    def getGrayScale(self):
-        """
-        Return a grayscale image
-        :return: grayscale image as numpy array
-        """
+            if self.mirror:
+                image = dsc.getColorMap()[:, ::-1, :]
+            else:
+                image = dsc.getColorMap()
+            grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            return (numpy.count_nonzero(grey) != 0), grey.transpose()
 
-        if self.mirror:
-            image = dsc.getColorMap()[:, ::-1, :]
-        else:
-            image = dsc.getColorMap()
-        grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        return (numpy.count_nonzero(grey) != 0), grey.transpose()
+        def getLastColorNum(self):
+            """
+            Get frame number of last color frame
+            :return: frame number
+            """
+            return dsc.getLastColorNum()
 
-    def getLastColorNum(self):
-        """
-        Get frame number of last color frame
-        :return: frame number
-        """
-        return dsc.getLastColorNum()
+        def getLastDepthNum(self):
+            """
+            Get frame number of last depth frame
+            :return: frame number
+            """
+            return dsc.getLastDepthNum()
 
-    def getLastDepthNum(self):
-        """
-        Get frame number of last depth frame
-        :return: frame number
-        """
-        return dsc.getLastDepthNum()
+        def getDepthIntrinsics(self):
+            """
+            Get intrinsic matrix of depth camera
+            :return: 3x3 intrinsic camera matrix
+            """
 
-    def getDepthIntrinsics(self):
-        """
-        Get intrinsic matrix of depth camera
-        :return: 3x3 intrinsic camera matrix
-        """
+            return dsc.getDepthIntrinsics()
 
-        return dsc.getDepthIntrinsics()
+        def getColorIntrinsics(self):
+            """
+            Get intrinsic matrix of color camera
+            :return: 3x3 intrinsic camera matrix
+            """
+            return dsc.getColorIntrinsics()
 
-    def getColorIntrinsics(self):
-        """
-        Get intrinsic matrix of color camera
-        :return: 3x3 intrinsic camera matrix
-        """
-        return dsc.getColorIntrinsics()
+        def getExtrinsics(self):
+            """
+            Get extrinsic matrix from color to depth camera
+            :return: 4x3 extrinsic camera matrix
+            """
+            return dsc.getExtrinsics()
 
-    def getExtrinsics(self):
+if OPENNI_IMPORTED:
+    class DepthSenseCameraDevice(CameraDevice):
         """
-        Get extrinsic matrix from color to depth camera
-        :return: 4x3 extrinsic camera matrix
-        """
-        return dsc.getExtrinsics()
-
-
-class DepthSenseCameraDevice(CameraDevice):
-    """
-    Class for OpenNI based devices, e.g. Kinect, Asus Xtion
-    """
-
-    def __init__(self, mirror=False):
-        """
-        Initialize device
-        :param mirror: mirror image
+        Class for OpenNI based devices, e.g. Kinect, Asus Xtion
         """
 
-        super(DepthSenseCameraDevice, self).__init__(mirror)
+        def __init__(self, mirror=False):
+            """
+            Initialize device
+            :param mirror: mirror image
+            """
 
-    def start(self):
+            super(DepthSenseCameraDevice, self).__init__(mirror)
+
+        def start(self):
+            """
+            Start device
+            :return: None
+            """
+
+            openni2.initialize()
+            self.ctx = openni.Context()
+            self.ctx.init()
+
+            # Create a depth generator
+            self.depth = openni.DepthGenerator()
+            self.depth.create(self.ctx)
+
+            # Set it to VGA maps at 30 FPS
+            self.depth.set_resolution_preset(openni.RES_VGA)
+            self.depth.fps = 30
+
+            # Create a color generator
+            self.color = openni.ImageGenerator()
+            self.color.create(self.ctx)
+
+            # Set it to VGA maps at 30 FPS
+            self.color.set_resolution_preset(openni.RES_VGA)
+            self.color.fps = 30
+
+            # Start generating
+            self.ctx.start_generating_all()
+
+        def stop(self):
+            """
+            Stop device
+            :return: None
+            """
+
+            self.ctx.stop_generating_all()
+            self.ctx.shutdown()
+
+        def getDepth(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+
+            # Get the pixel at these coordinates
+            try:
+                # Wait for new data to be available
+                self.ctx.wait_one_update_all(self.depth)
+            except openni2.OpenNIError, err:
+                print "Failed updating data:", err
+            else:
+
+                dpt = numpy.asarray(self.depth, dtype='float32').reshape(self.depth.map.height, self.depth.map.width)
+
+                dpt = numpy.asarray(self.depth.get_tuple_depth_map(), dtype='float32').reshape(self.depth.map.height, self.depth.map.width)
+
+                return True, dpt
+
+        def getRGB(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+
+            # Get the pixel at these coordinates
+            try:
+                # Wait for new data to be available
+                self.color.read_frame()
+
+                # self.ctx.wait_one_update_all(self.color)
+            except openni2.OpenNIError, err:
+                print "Failed updating data:", err
+            else:
+                dpt = numpy.asarray(self.color.get_tuple_depth_map(), dtype='float32').reshape(self.color.map.height, self.color.map.width)
+
+                return True, dpt
+
+if OPENNI2_IMPORTED:
+    class ONI_2_DepthSenseCameraDevice(CameraDevice):
         """
-        Stop device
-        :return: None
-        """
-        self.ctx = openni.Context()
-        self.ctx.init()
-
-        # Create a depth generator
-        self.depth = openni.DepthGenerator()
-        self.depth.create(self.ctx)
-
-        # Set it to VGA maps at 30 FPS
-        self.depth.set_resolution_preset(openni.RES_VGA)
-        self.depth.fps = 30
-
-        # Create a color generator
-        self.color = openni.ImageGenerator()
-        self.color.create(self.ctx)
-
-        # Set it to VGA maps at 30 FPS
-        self.color.set_resolution_preset(openni.RES_VGA)
-        self.color.fps = 30
-
-        # Start generating
-        self.ctx.start_generating_all()
-
-    def stop(self):
-        """
-        Stop device
-        :return: None
+        Class for OpenNI2 based devices, e.g. Kinect 2
         """
 
-        self.ctx.stop_generating_all()
-        self.ctx.shutdown()
+        def __init__(self, mirror=False):
+            """
+            Initialize device
+            :param mirror: mirror image
+            """
 
-    def getDepth(self):
-        """
-        Return a median smoothed depth image
-        :return: depth data as numpy array
-        """
+            super(ONI_2_DepthSenseCameraDevice, self).__init__(mirror)
 
-        # Get the pixel at these coordinates
-        try:
-            # Wait for new data to be available
-            self.ctx.wait_one_update_all(self.depth)
-        except openni.OpenNIError, err:
-            print "Failed updating data:", err
-        else:
-            dpt = numpy.asarray(self.depth.get_tuple_depth_map(), dtype='float32').reshape(self.depth.map.height, self.depth.map.width)
+        def start(self):
+            """
+            Start device
+            :return: None
+            """
+
+            openni2.initialize()
+            dev = openni2.Device.open_any()
+
+            # Create a depth generator
+            # on kinect 2 default is VGA maps at 30 FPS
+            self.depth = dev.create_depth_stream()
+
+            # Create a color generator
+            self.color = dev.create_color_stream()
+
+            # Start generating
+            self.depth.start()
+            self.color.start()
+
+        def stop(self):
+            """
+            Stop device
+            :return: None
+            """
+
+            self.depth.stop()
+            self.color.stop()
+            openni2.unload()
+
+        def getDepth(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+
+            frame = self.depth.read_frame()
+            frame_data = frame.get_buffer_as_uint16()
+            dpt = numpy.frombuffer(frame_data, numpy.uint16)
+            dpt = dpt.reshape((480, 640))
 
             return True, dpt
 
-    def getRGB(self):
-        """
-        Return a median smoothed depth image
-        :return: depth data as numpy array
-        """
-
-        # Get the pixel at these coordinates
-        try:
-            # Wait for new data to be available
-            self.ctx.wait_one_update_all(self.color)
-        except openni.OpenNIError, err:
-            print "Failed updating data:", err
-        else:
-            dpt = numpy.asarray(self.color.get_tuple_depth_map(), dtype='float32').reshape(self.color.map.height, self.color.map.width)
+        def getRGB(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+            frame = self.color.read_frame()
+            frame_data = frame.get_buffer_as_uint8()
+            dpt = numpy.frombuffer(frame_data, numpy.uint8)
+            dpt = dpt.reshape((1080, 1920, 3))
+            dpt = cv2.resize(dpt, (640, 480), interpolation=cv2.INTER_AREA)
 
             return True, dpt
 
+if REALSENSE_IMPORTED:
+    class RealSenseCameraDevice(CameraDevice):
+        """
+        Class for RealSense cameras supported by the version 2 of the library
+        """
+
+        def __init__(self, mirror=False):
+            """
+            Initialize device
+            :param mirror: mirror image
+            """
+
+            super(RealSenseCameraDevice, self).__init__(mirror)
+
+        def start(self):
+            """
+            Start device
+            return: None
+            """
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_stream(
+                rs.stream.depth, 640, 480, rs.format.z16, 30)
+            self.config.enable_stream(
+                rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            profile = self.pipeline.start(self.config)
+            sensor = profile.get_device().first_depth_sensor()
+            sensor.set_option(rs.option.enable_auto_exposure, 0)
+
+        def stop(self):
+            """
+            Stop device
+            :return: None
+            """
+            self.pipeline.stop()
+
+        def getDepth(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+            frames = self.pipeline.wait_for_frames()
+            depth_frame = frames.get_depth_frame()
+            depth_image = numpy.asanyarray(depth_frame.get_data()) * 0.8
+            return True, depth_image
+
+        def getRGB(self):
+            """
+            Return a bit color image
+            :return: color image as numpy array
+            """
+            frames = self.pipeline.wait_for_frames()
+            color_frame = frames.get_color_frame()
+            return True,numpy.asanyarray(color_frame.get_data())
 
 class FileDevice(CameraDevice):
     """

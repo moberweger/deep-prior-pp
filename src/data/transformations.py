@@ -130,7 +130,7 @@ def rotatePoint3D(p1, center, angle_x, angle_y, angle_z):
     :return: rotated point
     """
     pp = p1.copy()
-    pp -= center
+    pp = pp - center
     R = getRotationMatrix(angle_x, angle_y, angle_z)
     pr = numpy.array([pp[0], pp[1], pp[2], 1])
     ps = numpy.dot(R, pr)
