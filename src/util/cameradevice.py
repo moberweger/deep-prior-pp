@@ -36,6 +36,12 @@ except ImportError:
     print "Warning: Module lib_dscapture not found, disabling CreativeCameraDevice"
     LIB_DSC_IMPORTED = False
 try:
+    from openni import openni2
+    OPENNI2_IMPORTED = True
+except ImportError:
+    print "Warning: Module openni2 not found, disabling ONI_2_DepthSenseCameraDevice"
+    OPENNI2_IMPORTED = False
+try:
     import openni
     OPENNI_IMPORTED = True
 except ImportError:
@@ -47,6 +53,12 @@ try:
 except ImportError:
     print "Warning: pyrealsense2 modules not found, disabling RealSenseCameraDevice"
     REALSENSE_IMPORTED = False
+
+# nathan sharp
+from openni import openni2
+# from openni import _openni2 as c_api
+# OPENNI_IMPORTED = True
+# REALSENSE_IMPORTED = False
 
 __author__ = "Markus Oberweger <oberweger@icg.tugraz.at>"
 __copyright__ = "Copyright 2015, ICG, Graz University of Technology, Austria"
@@ -297,6 +309,8 @@ if OPENNI_IMPORTED:
             Start device
             :return: None
             """
+
+            openni2.initialize()
             self.ctx = openni.Context()
             self.ctx.init()
 
@@ -338,9 +352,12 @@ if OPENNI_IMPORTED:
             try:
                 # Wait for new data to be available
                 self.ctx.wait_one_update_all(self.depth)
-            except openni.OpenNIError, err:
+            except openni2.OpenNIError, err:
                 print "Failed updating data:", err
             else:
+
+                dpt = numpy.asarray(self.depth, dtype='float32').reshape(self.depth.map.height, self.depth.map.width)
+
                 dpt = numpy.asarray(self.depth.get_tuple_depth_map(), dtype='float32').reshape(self.depth.map.height, self.depth.map.width)
 
                 return True, dpt
@@ -354,13 +371,85 @@ if OPENNI_IMPORTED:
             # Get the pixel at these coordinates
             try:
                 # Wait for new data to be available
-                self.ctx.wait_one_update_all(self.color)
-            except openni.OpenNIError, err:
+                self.color.read_frame()
+
+                # self.ctx.wait_one_update_all(self.color)
+            except openni2.OpenNIError, err:
                 print "Failed updating data:", err
             else:
                 dpt = numpy.asarray(self.color.get_tuple_depth_map(), dtype='float32').reshape(self.color.map.height, self.color.map.width)
 
                 return True, dpt
+
+if OPENNI2_IMPORTED:
+    class ONI_2_DepthSenseCameraDevice(CameraDevice):
+        """
+        Class for OpenNI2 based devices, e.g. Kinect 2
+        """
+
+        def __init__(self, mirror=False):
+            """
+            Initialize device
+            :param mirror: mirror image
+            """
+
+            super(ONI_2_DepthSenseCameraDevice, self).__init__(mirror)
+
+        def start(self):
+            """
+            Start device
+            :return: None
+            """
+
+            openni2.initialize()
+            dev = openni2.Device.open_any()
+
+            # Create a depth generator
+            # on kinect 2 default is VGA maps at 30 FPS
+            self.depth = dev.create_depth_stream()
+
+            # Create a color generator
+            self.color = dev.create_color_stream()
+
+            # Start generating
+            self.depth.start()
+            self.color.start()
+
+        def stop(self):
+            """
+            Stop device
+            :return: None
+            """
+
+            self.depth.stop()
+            self.color.stop()
+            openni2.unload()
+
+        def getDepth(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+
+            frame = self.depth.read_frame()
+            frame_data = frame.get_buffer_as_uint16()
+            dpt = numpy.frombuffer(frame_data, numpy.uint16)
+            dpt = dpt.reshape((480, 640))
+
+            return True, dpt
+
+        def getRGB(self):
+            """
+            Return a median smoothed depth image
+            :return: depth data as numpy array
+            """
+            frame = self.color.read_frame()
+            frame_data = frame.get_buffer_as_uint8()
+            dpt = numpy.frombuffer(frame_data, numpy.uint8)
+            dpt = dpt.reshape((1080, 1920, 3))
+            dpt = cv2.resize(dpt, (640, 480), interpolation=cv2.INTER_AREA)
+
+            return True, dpt
 
 if REALSENSE_IMPORTED:
     class RealSenseCameraDevice(CameraDevice):
